@@ -266,6 +266,11 @@ function ageFloorIdx(age) {
   if (a >= 2) return 1; // Nadons Alt
   return 0;             // Nadons Pares
 }
+// Ràtio màxim per nivell (de la taula oficial) per a estimar grups
+const LEVEL_CAP = {
+  "Nadons Pares": 8, "Nadons Alt": 4, "Infants Baix": 7, "Infants Mig-Alt": 8,
+  "Xiquets Iniciació-Mitjà": 10, "Xiquets Mitjà-Perfeccionament": 16,
+};
 // Recomanació final: combina nota + edat + ajust manual. agePromoted = passa per edat tot i no assolir-ho per nota.
 function finalRecommendation(level, scores, age, override) {
   const r = computeResult(level, scores);
@@ -422,8 +427,48 @@ const PREV_SEASON = {
 async function storeGet(k) { try { const r = localStorage.getItem("aquacurs:" + k); return r ? JSON.parse(r) : null; } catch { return null; } }
 async function storeSet(k, v) { try { localStorage.setItem("aquacurs:" + k, JSON.stringify(v)); } catch {} }
 
+/* ============================ ROLS ============================ */
+const ROLES = {
+  monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["aval"], defaultTab: "aval" },
+  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Supervisa i, si cal, edita tots els cursos de natació.", tabs: ["aval", "taul", "dades"], defaultTab: "taul" },
+  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats.", tabs: ["aval", "taul", "ruti", "dades"], defaultTab: "taul" },
+};
+
+function RoleSelect({ onPick }) {
+  return (
+    <div className="sn-root" style={{ minHeight: "100vh" }}>
+      <style>{CSS}</style>
+      <header style={{ background: "var(--deep)", color: "#fff" }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "16px 20px" }} className="flex items-center gap-3">
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "var(--aqua)", display: "grid", placeItems: "center" }}><Waves size={22} color="#063b34" /></div>
+          <div>
+            <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.18rem", lineHeight: 1 }}>AquaCurs</div>
+            <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>Escola de Natació · Temporada 25-26</div>
+          </div>
+        </div>
+      </header>
+      <main style={{ maxWidth: 900, margin: "0 auto", padding: "44px 20px", width: "100%" }}>
+        <h2 className="sn-display" style={{ fontSize: "1.7rem", fontWeight: 800, marginBottom: 4 }}>Qui ets?</h2>
+        <p style={{ color: "var(--muted)", marginBottom: 24 }}>Tria el teu perfil per a entrar.</p>
+        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))" }}>
+          {Object.entries(ROLES).map(([id, r]) => (
+            <button key={id} className="sn-card sn-shadow sn-row" style={{ padding: 22, textAlign: "left", background: "#fff" }} onClick={() => onPick(id)}>
+              <div style={{ width: 48, height: 48, borderRadius: 14, background: "var(--surface)", display: "grid", placeItems: "center", marginBottom: 12 }}>
+                <r.icon size={24} color="var(--deep)" />
+              </div>
+              <div className="sn-display" style={{ fontWeight: 700, fontSize: "1.05rem", marginBottom: 4 }}>{r.label}</div>
+              <div style={{ fontSize: ".85rem", color: "var(--muted)", lineHeight: 1.45 }}>{r.desc}</div>
+            </button>
+          ))}
+        </div>
+      </main>
+    </div>
+  );
+}
+
 /* ============================ APP ============================ */
 export default function App() {
+  const [role, setRole] = useState(null);
   const [tab, setTab] = useState("aval");
   const [students, setStudents] = useState(() => seedStudents());
   const [evals, setEvals] = useState(() => seedEvaluations(seedStudents()));
@@ -438,12 +483,18 @@ export default function App() {
   useEffect(() => { if (loaded.current) storeSet("sn_students", students); }, [students]);
   useEffect(() => { if (loaded.current) storeSet("sn_evals", evals); }, [evals]);
 
-  const TABS = [
+  const ALL_TABS = [
     { id: "aval", label: "Avaluació", icon: ClipboardList },
     { id: "taul", label: "Tauler", icon: BarChart3 },
     { id: "ruti", label: "Rutines gimnàs", icon: Dumbbell },
     { id: "dades", label: "Dades", icon: Database },
   ];
+
+  if (!role) return <RoleSelect onPick={(r) => { setRole(r); setTab(ROLES[r].defaultTab); }} />;
+
+  const allowed = ROLES[role].tabs;
+  const TABS = ALL_TABS.filter((t) => allowed.includes(t.id));
+  const activeTab = allowed.includes(tab) ? tab : TABS[0].id;
 
   return (
     <div className="sn-root" style={{ minHeight: "100vh" }}>
@@ -461,31 +512,35 @@ export default function App() {
               <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>Avaluació · Diplomes · Gestió d'escola de natació</div>
             </div>
           </div>
-          <div style={{ fontSize: ".78rem", opacity: .75 }} className="flex items-center gap-2">
-            <Calendar size={14} /> Temporada 25-26
+          <div className="flex items-center gap-3">
+            <span className="sn-pill" style={{ background: "#ffffff1f", color: "#fff", fontSize: ".68rem" }}>{ROLES[role].label}</span>
+            <button className="sn-tab" style={{ color: "#cfe3df", padding: ".4rem .7rem" }} onClick={() => { setRole(null); setTab("aval"); }}>Canviar</button>
           </div>
         </div>
-        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "0 20px 14px" }} className="flex gap-1.5 overflow-x-auto">
-          {TABS.map((t) => (
-            <div key={t.id} className={`sn-tab ${tab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>
-              <t.icon size={17} /> {t.label}
-            </div>
-          ))}
-        </div>
+        {TABS.length > 1 && (
+          <div style={{ maxWidth: 1180, margin: "0 auto", padding: "0 20px 14px" }} className="flex gap-1.5 overflow-x-auto">
+            {TABS.map((t) => (
+              <div key={t.id} className={`sn-tab ${activeTab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>
+                <t.icon size={17} /> {t.label}
+              </div>
+            ))}
+          </div>
+        )}
       </header>
 
-      <main style={{ maxWidth: 1180, margin: "0 auto", padding: "22px 20px 60px" }}>
-        {tab === "aval" && <Avaluacio students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
-        {tab === "taul" && <Tauler students={students} evals={evals} />}
-        {tab === "ruti" && <Rutines />}
-        {tab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} />}
+      <main key={role} style={{ maxWidth: 1180, margin: "0 auto", padding: "22px 20px 60px" }}>
+        {activeTab === "aval" && <Avaluacio role={role} students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
+        {activeTab === "taul" && <Tauler students={students} evals={evals} />}
+        {activeTab === "ruti" && <Rutines />}
+        {activeTab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} />}
       </main>
     </div>
   );
 }
 
 /* ============================ MÒDUL AVALUACIÓ ============================ */
-function Avaluacio({ students, setStudents, evals, setEvals }) {
+function Avaluacio({ students, setStudents, evals, setEvals, role }) {
+  const isCoord = role !== "monitor";
   const [monitor, setMonitor] = useState(null);
   const [groupId, setGroupId] = useState(null);
   const [studentId, setStudentId] = useState(null);
@@ -498,33 +553,36 @@ function Avaluacio({ students, setStudents, evals, setEvals }) {
   };
 
   const monitors = useMemo(() => [...new Set(GROUPS.map((g) => g.monitor))].sort(), []);
-  const myGroups = useMemo(() => GROUPS.filter((g) => g.monitor === monitor), [monitor]);
+  const myGroups = useMemo(() => isCoord ? GROUPS : GROUPS.filter((g) => g.monitor === monitor), [isCoord, monitor]);
   const group = groupById(groupId);
   const groupStudents = useMemo(() => students.filter((s) => s.grupId === groupId), [students, groupId]);
   const student = students.find((s) => s.id === studentId);
 
   const setScore = (sid, itemId, val) => {
     const key = `25-26:${sid}`;
+    const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
     setEvals((prev) => {
       const cur = prev[key]?.scores || {};
       const next = { ...cur, [itemId]: val };
-      return { ...prev, [key]: { scores: next, monitor } };
+      return { ...prev, [key]: { ...(prev[key] || {}), scores: next, monitor: prev[key]?.monitor || gm } };
     });
   };
   const scoresFor = (sid) => evals[`25-26:${sid}`]?.scores || {};
   const overrideFor = (sid) => evals[`25-26:${sid}`]?.override || null;
   const setOverride = (sid, lvl) => {
     const key = `25-26:${sid}`;
+    const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
     setEvals((prev) => {
-      const cur = prev[key] || { scores: {}, monitor };
+      const cur = prev[key] || { scores: {}, monitor: gm };
       return { ...prev, [key]: { ...cur, override: lvl } };
     });
   };
   const commentFor = (sid) => { const e = evals[`25-26:${sid}`]; return e && "comment" in e ? e.comment : null; };
   const setComment = (sid, val) => {
     const key = `25-26:${sid}`;
+    const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
     setEvals((prev) => {
-      const cur = prev[key] || { scores: {}, monitor };
+      const cur = prev[key] || { scores: {}, monitor: gm };
       if (val === null) { const { comment, ...rest } = cur; return { ...prev, [key]: rest }; }
       return { ...prev, [key]: { ...cur, comment: val } };
     });
@@ -533,15 +591,21 @@ function Avaluacio({ students, setStudents, evals, setEvals }) {
   // BREADCRUMB
   const crumb = (
     <div className="flex items-center gap-1.5 text-sm mb-4 flex-wrap" style={{ color: "var(--muted)" }}>
-      <span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setMonitor(null); setGroupId(null); setStudentId(null); }}>Monitors</span>
-      {monitor && <><ChevronRight size={14} /><span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setGroupId(null); setStudentId(null); }}>{monitor}</span></>}
+      {isCoord ? (
+        <span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setGroupId(null); setStudentId(null); }}>Tots els grups</span>
+      ) : (
+        <>
+          <span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setMonitor(null); setGroupId(null); setStudentId(null); }}>Monitors</span>
+          {monitor && <><ChevronRight size={14} /><span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setGroupId(null); setStudentId(null); }}>{monitor}</span></>}
+        </>
+      )}
       {group && <><ChevronRight size={14} /><span className="sn-row px-2 py-1 rounded-lg" onClick={() => setStudentId(null)}>{group.nivell} {group.hora}</span></>}
       {student && <><ChevronRight size={14} /><span style={{ color: "var(--ink)", fontWeight: 600 }}>{student.nom}</span></>}
     </div>
   );
 
-  /* --- Selecció monitor --- */
-  if (!monitor) return (
+  /* --- Selecció monitor (només per a monitors) --- */
+  if (!isCoord && !monitor) return (
     <div>
       <h2 className="sn-display" style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: 4 }}>Qui ets?</h2>
       <p style={{ color: "var(--muted)", marginBottom: 18 }}>Selecciona el teu nom per veure els teus grups.</p>
@@ -569,14 +633,17 @@ function Avaluacio({ students, setStudents, evals, setEvals }) {
   /* --- Selecció grup --- */
   if (!groupId) return (
     <div>{crumb}
-      <h2 className="sn-display" style={{ fontSize: "1.4rem", fontWeight: 800, marginBottom: 14 }}>Els teus grups</h2>
+      <h2 className="sn-display" style={{ fontSize: "1.4rem", fontWeight: 800, marginBottom: 14 }}>{isCoord ? "Tots els grups" : "Els teus grups"}</h2>
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))" }}>
         {myGroups.map((g) => {
           const sc = students.filter((s) => s.grupId === g.id).length;
           const done = students.filter((s) => s.grupId === g.id && evals[`25-26:${s.id}`]).length;
           return (
             <button key={g.id} className="sn-card sn-shadow sn-row" style={{ padding: 16, textAlign: "left", background: "#fff" }} onClick={() => setGroupId(g.id)}>
-              <div className="sn-pill" style={{ background: "var(--surface)", color: "var(--deep)", marginBottom: 8 }}>{g.nivell}</div>
+              <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                <div className="sn-pill" style={{ background: "var(--surface)", color: "var(--deep)" }}>{g.nivell}</div>
+                {isCoord && <span style={{ fontSize: ".74rem", color: "var(--muted)", fontWeight: 600 }}>{g.monitor}</span>}
+              </div>
               <div className="flex items-center gap-2 text-sm" style={{ color: "var(--muted)", marginBottom: 10 }}>
                 <Clock size={14} /> {g.dia} · {g.hora}
               </div>
@@ -1021,6 +1088,7 @@ function SingleDiplomaButton({ student, level, group, scores, recOverride, comme
 function Tauler({ students, evals }) {
   const data = useMemo(() => {
     const perLevel = {}; LEVELS.forEach((l) => (perLevel[l] = { PUJA: 0, MANTÉ: 0, REFORÇ: 0, PENDENT: 0 }));
+    const nextByLevel = {}; LEVELS.forEach((l) => (nextByLevel[l] = 0));
     let avgSum = 0, avgN = 0, total = students.length, avaluats = 0, agePromos = 0;
     students.forEach((s) => {
       const g = groupById(s.grupId); const sc = evals[`25-26:${s.id}`]?.scores || {};
@@ -1029,10 +1097,11 @@ function Tauler({ students, evals }) {
       if (r.result !== "PENDENT") { avaluats++; avgSum += r.avg; avgN++; }
       const af = finalRecommendation(g.nivell, sc, studentAge(s), evals[`25-26:${s.id}`]?.override || null);
       if (af.agePromoted) agePromos++;
+      if (nextByLevel[af.rec] != null) nextByLevel[af.rec]++;
     });
     const totals = { PUJA: 0, MANTÉ: 0, REFORÇ: 0, PENDENT: 0 };
     LEVELS.forEach((l) => ["PUJA", "MANTÉ", "REFORÇ", "PENDENT"].forEach((k) => (totals[k] += perLevel[l][k])));
-    return { perLevel, totals, total, avaluats, agePromos, avgGlobal: avgN ? avgSum / avgN : 0 };
+    return { perLevel, totals, total, avaluats, agePromos, avgGlobal: avgN ? avgSum / avgN : 0, nextByLevel };
   }, [students, evals]);
 
   const prevTotals = useMemo(() => {
@@ -1108,11 +1177,28 @@ function Tauler({ students, evals }) {
             </BarChart>
           </ResponsiveContainer>
         </Panel>
+        <Panel title="Planificació temporada 26-27" full>
+          <div style={{ fontSize: ".82rem", color: "var(--muted)", marginBottom: 12 }}>Segons les recomanacions actuals, alumnes que estaran a cada nivell el curs vinent i grups orientatius que farien falta.</div>
+          <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
+            {LEVELS.map((l) => {
+              const n = data.nextByLevel[l] || 0;
+              const cap = LEVEL_CAP[l] || 10;
+              const groups = Math.ceil(n / cap) || 0;
+              const t = themeOf(l);
+              return (
+                <div key={l} style={{ background: "var(--surface)", borderRadius: 12, padding: "12px 14px", borderLeft: `4px solid ${t.c}` }}>
+                  <div style={{ fontSize: ".74rem", fontWeight: 600, color: "var(--deep)", lineHeight: 1.2, minHeight: 32 }}>{l}</div>
+                  <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.7rem", color: t.c, lineHeight: 1.1, marginTop: 4 }}>{n} <span style={{ fontSize: ".72rem", color: "var(--muted)", fontWeight: 500 }}>alumnes</span></div>
+                  <div style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 2 }}>≈ {groups} grup{groups === 1 ? "" : "s"} (màx. {cap})</div>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
       </div>
     </div>
   );
 }
-function KPI({ label, value, sub, icon: Icon, c }) {
   return (
     <div className="sn-card sn-shadow" style={{ background: "#fff", padding: 16 }}>
       <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
@@ -1260,9 +1346,7 @@ function Rutines() {
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const generate = async () => {
-    // En aquest desplegament no hi ha clau d'IA (caldria un backend). Fem servir el motor propi:
-    // instantani, gratuit i offline. Per activar la IA, crea una funcio serverless que cride
-    // l'API d'Anthropic amb la teua clau i canvia aquesta funcio per un fetch a eixe endpoint.
+    // En aquest desplegament no hi ha clau d'IA (caldria un backend). Fem servir el motor propi.
     setLoading(true); setRoutine(null);
     setTimeout(() => { setRoutine(buildRoutine(form)); setSource("motor propi"); setLoading(false); }, 350);
   };
