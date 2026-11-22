@@ -2,7 +2,10 @@
    Generació del PDF d'un diploma (anvers + revers) al navegador
    i enviament a la família a través de /api/send-diploma.
    ============================================================ */
-// html2canvas i jsPDF es carreguen només quan cal (no alenteixen l'obertura de l'app)
+// html2canvas i jsPDF van dins del paquet principal (no amb càrrega dinàmica): així, després
+// d'una actualització, una pestanya antiga no falla buscant fitxers que Vercel ja no serveix.
+import html2canvas from "html2canvas";
+import { jsPDF } from "jspdf";
 
 const PAGE_W = 210, PAGE_H = 297, MARGIN = 10; // mm (A4 vertical)
 
@@ -20,7 +23,6 @@ export async function diplomaElementToPdfBase64(root) {
   const faces = Array.from(root.querySelectorAll(".dip"));
   if (faces.length === 0) throw new Error("No s'ha trobat el diploma per a generar el PDF.");
 
-  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas"), import("jspdf")]);
   const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
   const usableW = PAGE_W - MARGIN * 2;
 
