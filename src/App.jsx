@@ -3,8 +3,11 @@ import {
   Waves, Users, ClipboardList, BarChart3, Dumbbell, Database, ChevronRight,
   ChevronLeft, Printer, Check, Award, AlertTriangle, ArrowUpRight, Minus,
   RotateCcw, Upload, Download, Search, X, Loader2, FileSpreadsheet, Sparkles,
-  Calendar, Clock, User
+  Calendar, Clock, User, Mail, Send
 } from "lucide-react";
+import {
+  waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, getSendKey, setSendKey, EMAIL_RE
+} from "./diplomaPdf.js";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, Cell, PieChart, Pie
@@ -203,8 +206,8 @@ const GROUPS = [
   { id: 6261, nivell: "Infants Mig-Alt", dia: "Dilluns i dimecres", hora: "17:00h", monitor: "Aitor" },
   { id: 6253, nivell: "Infants Mig-Alt", dia: "Dilluns i dimecres", hora: "18:30h", monitor: "Aitor" },
   { id: 6280, nivell: "Xiquets Mitjà-Perfeccionament", dia: "Dilluns i dimecres", hora: "19:15h", monitor: "Aitor" },
-  { id: 6276, nivell: "Xiquets Iniciació-Mitjà", dia: "Dilluns i dimecres", hora: "17:45h", monitor: "Mei" },
-  { id: 6254, nivell: "Infants Baix", dia: "Dimarts i dijous", hora: "17:45h", monitor: "Mei" },
+  { id: 6276, nivell: "Xiquets Iniciació-Mitjà", dia: "Dilluns i dimecres", hora: "17:45h", monitor: "" }, // abans Mei: pendent de reassignar
+  { id: 6254, nivell: "Infants Baix", dia: "Dimarts i dijous", hora: "17:45h", monitor: "" },       // abans Mei: pendent de reassignar
   { id: 6277, nivell: "Xiquets Mitjà-Perfeccionament", dia: "Dimarts i dijous", hora: "18:30h", monitor: "Dave" },
   { id: 6278, nivell: "Xiquets Iniciació-Mitjà", dia: "Dimarts i dijous", hora: "17:00h", monitor: "Dave" },
   { id: 6301, nivell: "Infants Baix", dia: "Dissabte", hora: "10:00h", monitor: "Alicia" },
@@ -215,6 +218,40 @@ const GROUPS = [
 ];
 const groupName = (g) => `${g.nivell} · ${g.dia} ${g.hora}`;
 const groupById = (id) => GROUPS.find((g) => g.id === id);
+
+// Monitors amb cursos de natació (temporada 25-26)
+const MONITORS = ["David", "Dave", "Aitor", "Guillem", "Vanesa", "Jordi", "Ana", "Alicia", "Clara"];
+const UNASSIGNED = "Sense assignar";
+const monitorOf = (g) => (g && g.monitor) || UNASSIGNED;
+
+// Estat de cada alumne: pendent → en curs → avaluat → diploma llest (el marca el monitor) → enviat (coordinació)
+const evKey = (sid) => `25-26:${sid}`;
+const STATUS_ORDER = ["pendent", "encurs", "avaluat", "llest", "enviat"];
+const STATUS_META = {
+  pendent: { label: "Pendent", c: "#8a8472" },
+  encurs: { label: "En curs", c: "#b07a12" },
+  avaluat: { label: "Avaluat", c: "#2f6f9f" },
+  llest: { label: "Diploma llest", c: "#1f7a6f" },
+  enviat: { label: "Enviat", c: "#07313A" },
+};
+function evaluationComplete(level, scores) {
+  const r = computeResult(level, scores || {});
+  return r.total > 0 && r.evaluated === r.total;
+}
+function studentStatus(student, evals) {
+  const g = groupById(student.grupId); const e = evals[evKey(student.id)];
+  if (!g || !e) return "pendent";
+  if (e.sentAt) return "enviat";
+  if (e.ready) return "llest";
+  const r = computeResult(g.nivell, e.scores || {});
+  if (r.total > 0 && r.evaluated === r.total) return "avaluat";
+  return r.evaluated > 0 ? "encurs" : "pendent";
+}
+const isAtLeast = (st, min) => STATUS_ORDER.indexOf(st) >= STATUS_ORDER.indexOf(min);
+function StatusPill({ st }) {
+  const m = STATUS_META[st];
+  return <span className="sn-pill" style={{ background: m.c + "1a", color: m.c, whiteSpace: "nowrap" }}>{st === "enviat" ? <Mail size={11} /> : st === "llest" ? <Award size={11} /> : null}{m.label}</span>;
+}
 
 /* ============================ LÒGICA ============================ */
 function computeResult(level, scores) {
@@ -429,8 +466,8 @@ async function storeSet(k, v) { try { localStorage.setItem("aquacurs:" + k, JSON
 /* ============================ ROLS ============================ */
 const ROLES = {
   monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["aval"], defaultTab: "aval" },
-  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Supervisa i, si cal, edita tots els cursos de natació.", tabs: ["aval", "taul", "dades"], defaultTab: "taul" },
-  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats.", tabs: ["aval", "taul", "ruti", "dades"], defaultTab: "taul" },
+  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "taul", "dades"], defaultTab: "segu" },
+  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "taul", "ruti", "dades"], defaultTab: "taul" },
 };
 
 function RoleSelect({ onPick }) {
@@ -483,6 +520,7 @@ export default function App() {
   useEffect(() => { if (loaded.current) storeSet("sn_evals", evals); }, [evals]);
 
   const ALL_TABS = [
+    { id: "segu", label: "Seguiment", icon: Users },
     { id: "aval", label: "Avaluació", icon: ClipboardList },
     { id: "taul", label: "Tauler", icon: BarChart3 },
     { id: "ruti", label: "Rutines gimnàs", icon: Dumbbell },
@@ -528,6 +566,7 @@ export default function App() {
       </header>
 
       <main key={role} style={{ maxWidth: 1180, margin: "0 auto", padding: "22px 20px 60px" }}>
+        {activeTab === "segu" && <Seguiment students={students} evals={evals} setEvals={setEvals} />}
         {activeTab === "aval" && <Avaluacio role={role} students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
         {activeTab === "taul" && <Tauler students={students} evals={evals} />}
         {activeTab === "ruti" && <Rutines />}
@@ -551,7 +590,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
     setStudents((prev) => [...prev, { id, ...data }]);
   };
 
-  const monitors = useMemo(() => [...new Set(GROUPS.map((g) => g.monitor))].sort(), []);
+  const monitors = MONITORS;
   const myGroups = useMemo(() => isCoord ? GROUPS : GROUPS.filter((g) => g.monitor === monitor), [isCoord, monitor]);
   const group = groupById(groupId);
   const groupStudents = useMemo(() => students.filter((s) => s.grupId === groupId), [students, groupId]);
@@ -577,6 +616,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
     });
   };
   const commentFor = (sid) => { const e = evals[`25-26:${sid}`]; return e && "comment" in e ? e.comment : null; };
+  const diplomaActions = makeDiplomaActions(evals, setEvals);
   const setComment = (sid, val) => {
     const key = `25-26:${sid}`;
     const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
@@ -611,6 +651,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))" }}>
         {monitors.map((m) => {
           const gc = GROUPS.filter((g) => g.monitor === m).length;
+          const gLabel = gc === 0 ? "Encara sense grups" : `${gc} grup${gc === 1 ? "" : "s"}`;
           return (
             <button key={m} className="sn-card sn-shadow sn-row" style={{ padding: 18, textAlign: "left", background: "#fff" }} onClick={() => setMonitor(m)}>
               <div className="flex items-center gap-3">
@@ -619,7 +660,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
                 </div>
                 <div>
                   <div className="sn-display" style={{ fontWeight: 700 }}>{m}</div>
-                  <div style={{ fontSize: ".78rem", color: "var(--muted)" }}>{gc} grups</div>
+                  <div style={{ fontSize: ".78rem", color: "var(--muted)" }}>{gLabel}</div>
                 </div>
               </div>
             </button>
@@ -636,12 +677,12 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))" }}>
         {myGroups.map((g) => {
           const sc = students.filter((s) => s.grupId === g.id).length;
-          const done = students.filter((s) => s.grupId === g.id && evals[`25-26:${s.id}`]).length;
+          const done = students.filter((s) => s.grupId === g.id && isAtLeast(studentStatus(s, evals), "avaluat")).length;
           return (
             <button key={g.id} className="sn-card sn-shadow sn-row" style={{ padding: 16, textAlign: "left", background: "#fff" }} onClick={() => setGroupId(g.id)}>
               <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
                 <div className="sn-pill" style={{ background: "var(--surface)", color: "var(--deep)" }}>{g.nivell}</div>
-                {isCoord && <span style={{ fontSize: ".74rem", color: "var(--muted)", fontWeight: 600 }}>{g.monitor}</span>}
+                {isCoord && <span style={{ fontSize: ".74rem", color: g.monitor ? "var(--muted)" : "var(--coral)", fontWeight: 600 }}>{monitorOf(g)}</span>}
               </div>
               <div className="flex items-center gap-2 text-sm" style={{ color: "var(--muted)", marginBottom: 10 }}>
                 <Clock size={14} /> {g.dia} · {g.hora}
@@ -683,6 +724,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                {isAtLeast(studentStatus(s, evals), "llest") && <StatusPill st={studentStatus(s, evals)} />}
                 {af.agePromoted && <span className="sn-pill" style={{ background: "var(--sun)1c", color: "#8a5a10" }} title="Promociona per edat"><AlertTriangle size={11} /> edat</span>}
                 <span className="sn-pill" style={{ background: m.c + "1a", color: m.c }}><m.icon size={12} /> {af.result}</span>
                 <ChevronRight size={18} color="var(--muted)" />
@@ -691,7 +733,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
           );
         })}
       </div>
-      {showDiplomas && <DiplomaModal students={groupStudents} level={group.nivell} group={group} scoresFor={scoresFor} overrideFor={overrideFor} commentFor={commentFor} onClose={() => setShowDiplomas(false)} />}
+      {showDiplomas && <DiplomaModal students={groupStudents} level={group.nivell} group={group} scoresFor={scoresFor} overrideFor={overrideFor} commentFor={commentFor} canSend={isCoord} actions={diplomaActions} onClose={() => setShowDiplomas(false)} />}
       {showAdd && <AddStudentModal fixedGroupId={groupId} onAdd={addStudent} onClose={() => setShowAdd(false)} />}
     </div>
   );
@@ -795,7 +837,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
                 </button>
               )}
             </div>
-            <SingleDiplomaButton student={student} level={group.nivell} group={group} scores={scores} recOverride={override} comment={effComment} />
+            <SingleDiplomaButton student={student} level={group.nivell} group={group} scores={scores} recOverride={override} comment={effComment} canSend={isCoord} actions={diplomaActions} />
           </div>
         </div>
       </div>
@@ -910,7 +952,7 @@ function DiplomaFront({ student, level, group, comment }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "end", marginTop: 6, position: "relative", zIndex: 2 }}>
         <div />
         <div style={{ textAlign: "center" }}>
-          <Signature name={group.monitor} />
+          {group.monitor ? <Signature name={group.monitor} /> : <div style={{ width: 150, height: 34, borderBottom: "1px solid #c9bfa6" }} />}
           <div style={{ fontSize: ".66rem", color: "#8a8472", marginTop: 2 }}>El monitor/a</div>
         </div>
         <img src={LOGO_AJUNTAMENT} alt="Ajuntament de Carcaixent" style={{ height: 25, justifySelf: "end", opacity: .92 }} />
@@ -944,7 +986,7 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
         <InfoCell label="Curs" value={group.nivell} t={t} />
         <InfoCell label="Dies" value={group.dia} t={t} />
         <InfoCell label="Hora" value={group.hora} t={t} />
-        <InfoCell label="Monitor/a" value={group.monitor} t={t} />
+        <InfoCell label="Monitor/a" value={group.monitor || "—"} t={t} />
       </div>
 
       {/* Ítems amb nota */}
@@ -1019,7 +1061,7 @@ function AddStudentModal({ onClose, onAdd, fixedGroupId }) {
               <div className="sn-input" style={{ background: "var(--surface)", color: "var(--muted)" }}>{g.nivell} · {g.hora}</div>
             ) : (
               <select className="sn-input" value={grupId} onChange={(e) => setGrupId(e.target.value)}>
-                {GROUPS.map((gr) => <option key={gr.id} value={gr.id}>{gr.nivell} · {gr.dia} {gr.hora} ({gr.monitor})</option>)}
+                {GROUPS.map((gr) => <option key={gr.id} value={gr.id}>{gr.nivell} · {gr.dia} {gr.hora} ({monitorOf(gr)})</option>)}
               </select>
             )}
           </Field>
@@ -1037,49 +1079,415 @@ function AddStudentModal({ onClose, onAdd, fixedGroupId }) {
     </div>
   );
 }
-function PrintBar({ onClose, count }) {
+function PrintBar({ onClose, count, onSend }) {
   return (
-    <div className="no-print flex items-center justify-between" style={{ position: "sticky", top: 0, background: "var(--deep)", color: "#fff", padding: "12px 16px", borderRadius: "14px 14px 0 0", zIndex: 5 }}>
-      <div className="flex items-center gap-2 sn-display" style={{ fontWeight: 700 }}><Award size={18} /> {count} diploma{count > 1 ? "es" : ""} a punt</div>
-      <div className="flex gap-2">
+    <div className="no-print flex items-center justify-between flex-wrap gap-2" style={{ position: "sticky", top: 0, background: "var(--deep)", color: "#fff", padding: "12px 16px", borderRadius: "14px 14px 0 0", zIndex: 5 }}>
+      <div className="flex items-center gap-2 sn-display" style={{ fontWeight: 700 }}><Award size={18} /> {count} {count === 1 ? "diploma" : "diplomes"}</div>
+      <div className="flex gap-2 flex-wrap">
+        {onSend && count > 0 && <button className="sn-btn" style={{ background: "#fff", color: "var(--deep)" }} onClick={onSend}><Mail size={16} /> Enviar per correu</button>}
         <button className="sn-btn sn-btn-primary" onClick={() => window.print()}><Printer size={16} /> Imprimir / Desar PDF</button>
         <button className="sn-btn" style={{ background: "#ffffff22", color: "#fff" }} onClick={onClose}><X size={16} /></button>
       </div>
     </div>
   );
 }
-function DiplomaModal({ students, level, group, scoresFor, overrideFor, commentFor, onClose }) {
+
+// Accions sobre l'estat del diploma (es guarden dins de l'avaluació de cada alumne)
+function makeDiplomaActions(evals, setEvals) {
+  const get = (sid) => evals[evKey(sid)] || null;
+  const setReady = (sids, value) => setEvals((prev) => {
+    const next = { ...prev };
+    sids.forEach((sid) => {
+      const k = evKey(sid); if (!next[k] || next[k].sentAt) return;
+      if (value) next[k] = { ...next[k], ready: true, readyAt: new Date().toISOString() };
+      else { const { ready, readyAt, ...rest } = next[k]; next[k] = rest; }
+    });
+    return next;
+  });
+  const markSent = (sid, to) => setEvals((prev) => {
+    const k = evKey(sid);
+    return { ...prev, [k]: { ...(prev[k] || {}), sentAt: new Date().toISOString(), sentTo: to } };
+  });
+  return { get, setReady, markSent };
+}
+
+function DiplomaModal({ students, level, group, scoresFor, overrideFor, commentFor, canSend, actions, onClose }) {
+  const [sending, setSending] = useState(false);
   const list = students.filter((s) => Object.keys(scoresFor(s.id)).length > 0);
   const cOf = (sid) => { const mc = commentFor ? commentFor(sid) : null; return mc != null ? mc : autoComment(level, scoresFor(sid)); };
+  const entries = list.map((s) => {
+    const e = actions.get(s.id) || {};
+    return {
+      student: s, scores: scoresFor(s.id), recOverride: overrideFor ? overrideFor(s.id) : null, comment: cOf(s.id),
+      complete: evaluationComplete(level, scoresFor(s.id)), ready: !!e.ready, sentAt: e.sentAt || null,
+    };
+  });
+  const markable = entries.filter((e) => e.complete && !e.ready && !e.sentAt);
+  const incomplete = entries.filter((e) => !e.complete).length;
+  const readyN = entries.filter((e) => e.ready && !e.sentAt).length;
+  const sentN = entries.filter((e) => e.sentAt).length;
+  const multi = entries.length > 1;
+
   return (
     <div className="no-print" style={{ position: "fixed", inset: 0, background: "#07313acc", zIndex: 50, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 20, overflow: "auto" }} onClick={onClose}>
       <div style={{ maxWidth: 820, width: "100%" }} onClick={(e) => e.stopPropagation()}>
-        <PrintBar onClose={onClose} count={list.length} />
+        <PrintBar onClose={onClose} count={list.length} onSend={canSend ? () => setSending(true) : null} />
+
+        {/* Estat dels diplomes (no s'imprimeix) */}
+        {entries.length > 0 && (
+          <div className="no-print flex items-center justify-between flex-wrap gap-2" style={{ background: "var(--surface)", padding: "10px 16px", fontSize: ".82rem" }}>
+            <div style={{ color: "var(--muted)" }}>
+              <b style={{ color: "var(--deep)" }}>{readyN}</b> llest{readyN === 1 ? "" : "s"} per a coordinació · <b style={{ color: "var(--deep)" }}>{sentN}</b> enviat{sentN === 1 ? "" : "s"}
+              {incomplete > 0 && <> · <span style={{ color: "var(--coral)" }}>{incomplete} amb l'avaluació incompleta</span></>}
+            </div>
+            {markable.length > 0 && (
+              <button className="sn-btn sn-btn-dark" style={{ padding: ".5rem .8rem", fontSize: ".82rem" }} onClick={() => actions.setReady(markable.map((e) => e.student.id), true)}>
+                <Check size={15} /> {multi ? `Marcar ${markable.length} com a llestos` : "Marcar com a llest"}
+              </button>
+            )}
+          </div>
+        )}
+
         <div id="print-area" style={{ background: "#fff", borderRadius: "0 0 14px 14px", padding: 16, display: "grid", gap: 16 }}>
           {list.length === 0 && <div style={{ padding: 30, textAlign: "center", color: "var(--muted)" }}>Cap alumne d'aquest grup té encara cap ítem puntuat.</div>}
-          {list.map((s) => <Diploma key={s.id} student={s} level={level} group={group} scores={scoresFor(s.id)} recOverride={overrideFor ? overrideFor(s.id) : null} comment={cOf(s.id)} />)}
+          {entries.map((e) => {
+            const st = e.sentAt ? "enviat" : e.ready ? "llest" : e.complete ? "avaluat" : "encurs";
+            return (
+              <div key={e.student.id} style={{ display: "grid", gap: 10 }}>
+                {multi && (
+                  <div className="no-print flex items-center justify-between gap-2" style={{ fontSize: ".84rem" }}>
+                    <span style={{ fontWeight: 700, color: "var(--deep)" }}>{e.student.nom}</span>
+                    <div className="flex items-center gap-2">
+                      <StatusPill st={st} />
+                      {e.complete && !e.sentAt && (
+                        <button className="sn-btn sn-btn-ghost" style={{ padding: ".3rem .6rem", fontSize: ".74rem" }} onClick={() => actions.setReady([e.student.id], !e.ready)}>
+                          {e.ready ? "Desmarcar" : "Marcar llest"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+                <Diploma student={e.student} level={level} group={group} scores={e.scores} recOverride={e.recOverride} comment={e.comment} />
+              </div>
+            );
+          })}
         </div>
       </div>
+      {sending && <SendDiplomasPanel entries={entries} level={level} group={group} onSent={actions.markSent} onClose={() => setSending(false)} />}
     </div>
   );
 }
-function SingleDiplomaButton({ student, level, group, scores, recOverride, comment }) {
+function SingleDiplomaButton({ student, level, group, scores, recOverride, comment, canSend, actions }) {
   const [open, setOpen] = useState(false);
   const has = Object.keys(scores).length > 0;
+  const e = actions.get(student.id) || {};
+  const complete = evaluationComplete(level, scores);
   return (
     <>
       <button className="sn-btn sn-btn-primary w-full justify-center" style={{ opacity: has ? 1 : .5 }} disabled={!has} onClick={() => setOpen(true)}><Award size={17} /> Generar diploma</button>
+      {complete && !e.sentAt && (
+        <button className="sn-btn sn-btn-ghost w-full justify-center" style={{ marginTop: 8 }} onClick={() => actions.setReady([student.id], !e.ready)}>
+          {e.ready ? <><X size={16} /> Desmarcar diploma llest</> : <><Check size={16} /> Marcar diploma com a llest</>}
+        </button>
+      )}
+      {e.sentAt && <div style={{ fontSize: ".78rem", color: "var(--muted)", marginTop: 8, textAlign: "center" }}>Diploma enviat el {new Date(e.sentAt).toLocaleDateString("ca-ES")} a {e.sentTo}</div>}
       {open && (
-        <div className="no-print" style={{ position: "fixed", inset: 0, background: "#07313acc", zIndex: 50, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 20, overflow: "auto" }} onClick={() => setOpen(false)}>
-          <div style={{ maxWidth: 760, width: "100%" }} onClick={(e) => e.stopPropagation()}>
-            <PrintBar onClose={() => setOpen(false)} count={1} />
-            <div id="print-area" style={{ background: "#fff", borderRadius: "0 0 14px 14px", padding: 16 }}>
-              <Diploma student={student} level={level} group={group} scores={scores} recOverride={recOverride} comment={comment} />
-            </div>
-          </div>
-        </div>
+        <DiplomaModal students={[student]} level={level} group={group} scoresFor={() => scores} overrideFor={() => recOverride} commentFor={() => comment}
+          canSend={canSend} actions={actions} onClose={() => setOpen(false)} />
       )}
     </>
+  );
+}
+
+/* ============================ ENVIAMENT DE DIPLOMES PER CORREU (només coordinació) ============================ */
+const SEASON_LABEL = "25-26";
+const SEND_DELAY_MS = 700; // pausa entre correus (límit de velocitat de Resend)
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
+  const [sendKey, setKeyState] = useState(getSendKey());
+  const [keyDraft, setKeyDraft] = useState("");
+  const [resend, setResend] = useState(false);
+  const [includeNotReady, setIncludeNotReady] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [current, setCurrent] = useState(null); // entrada que s'està renderitzant fora de pantalla
+  const [status, setStatus] = useState({}); // sid -> { s: "ok" | "error" | "sending", m }
+  const [fatal, setFatal] = useState("");
+  const offRef = useRef(null);
+  const cancelRef = useRef(false);
+
+  const rows = entries.map((e) => {
+    const email = (e.student.email || "").trim();
+    return { ...e, email, valid: EMAIL_RE.test(email) };
+  });
+  const allowed = (r) => r.ready || (includeNotReady && r.complete) || r.sentAt;
+  const toSend = rows.filter((r) => r.valid && allowed(r) && (resend || !r.sentAt) && status[r.student.id]?.s !== "ok");
+  const noEmail = rows.filter((r) => !r.valid).length;
+  const already = rows.filter((r) => r.valid && r.sentAt).length;
+  const notReady = rows.filter((r) => r.complete && !r.ready && !r.sentAt).length;
+  const incomplete = rows.filter((r) => !r.complete && !r.sentAt).length;
+  const [total, setTotal] = useState(0);
+  const done = Object.values(status).filter((x) => x.s === "ok").length;
+
+  const saveKey = () => { const k = keyDraft.trim(); if (!k) return; setSendKey(k); setKeyState(k); setKeyDraft(""); setFatal(""); };
+
+  const run = async () => {
+    const queue = toSend.slice();
+    setConfirm(false); setRunning(true); setFatal(""); setTotal(queue.length); cancelRef.current = false;
+    for (const r of queue) {
+      if (cancelRef.current) break;
+      const sid = r.student.id;
+      setStatus((p) => ({ ...p, [sid]: { s: "sending" } }));
+      try {
+        setCurrent(r);
+        await waitForPaint();
+        if (!offRef.current) throw new Error("No s'ha pogut preparar el diploma.");
+        const pdfBase64 = await diplomaElementToPdfBase64(offRef.current);
+        const rec = finalRecommendation(level, r.scores, studentAge(r.student), r.recOverride).rec;
+        await sendDiplomaEmail({ sendKey, to: r.email, studentName: r.student.nom, level, recommended: rec, season: SEASON_LABEL, pdfBase64 });
+        onSent(sid, r.email);
+        setStatus((p) => ({ ...p, [sid]: { s: "ok" } }));
+      } catch (err) {
+        setStatus((p) => ({ ...p, [sid]: { s: "error", m: err.message } }));
+        if (err.status === 401) { setSendKey(""); setKeyState(""); setFatal("El codi d'enviament no és correcte. Torna a introduir-lo."); break; }
+        if (err.status === 429) { setFatal(`${err.message}. S'ha aturat l'enviament: torna-ho a provar més tard (els ja enviats no es repetiran).`); break; }
+        if (err.status === 500) { setFatal(err.message); break; }
+      }
+      await sleep(SEND_DELAY_MS);
+    }
+    setCurrent(null); setRunning(false);
+  };
+
+  const pill = (bg, color, children, title) => <span className="sn-pill" style={{ background: bg, color, whiteSpace: "nowrap" }} title={title}>{children}</span>;
+  const badge = (r) => {
+    const st = status[r.student.id];
+    if (st?.s === "sending") return pill("var(--surface)", "var(--muted)", <><Loader2 size={12} className="animate-spin" /> Enviant…</>);
+    if (st?.s === "ok") return pill("#2a9d8f22", "#1f7a6f", <><Check size={12} /> Enviat</>);
+    if (st?.s === "error") return pill("#f08a5d22", "var(--coral)", <><AlertTriangle size={12} /> Error</>, st.m);
+    if (!r.valid) return pill("#f08a5d22", "var(--coral)", "Sense email");
+    if (r.sentAt) return pill("var(--surface)", "var(--muted)", `Enviat ${new Date(r.sentAt).toLocaleDateString("ca-ES")}`);
+    if (r.ready) return pill("#2a9d8f22", "#1f7a6f", "Llest");
+    if (!r.complete) return pill("#f08a5d22", "var(--coral)", "Incomplet");
+    return pill("var(--surface)", "var(--muted)", "No marcat llest");
+  };
+
+  return (
+    <div className="no-print" style={{ position: "fixed", inset: 0, background: "#07313aee", zIndex: 70, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 20, overflow: "auto" }} onClick={(e) => { e.stopPropagation(); if (!running) onClose(); }}>
+      <div className="sn-card sn-shadow" style={{ background: "#fff", width: "100%", maxWidth: 520, padding: 20 }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+          <div className="sn-display flex items-center gap-2" style={{ fontWeight: 800, fontSize: "1.15rem" }}><Mail size={18} /> Enviar diplomes per correu</div>
+          <button className="sn-btn sn-btn-ghost" style={{ padding: ".4rem .55rem", opacity: running ? .4 : 1 }} disabled={running} onClick={onClose}><X size={16} /></button>
+        </div>
+        <div style={{ fontSize: ".82rem", color: "var(--muted)", marginBottom: 14 }}>
+          {group.nivell} · {group.dia} {group.hora} · {monitorOf(group)}. S'envien els diplomes marcats com a llestos pel monitor, en PDF, a l'email de contacte de cada alumne.
+        </div>
+
+        {!sendKey && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: ".82rem", marginBottom: 6 }}>Introdueix el <b>codi d'enviament</b> (només cal la primera vegada en aquest dispositiu):</div>
+            <div className="flex gap-2">
+              <input className="sn-input" type="password" value={keyDraft} placeholder="Codi d'enviament" onChange={(e) => setKeyDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveKey()} />
+              <button className="sn-btn sn-btn-dark" onClick={saveKey}>Desar</button>
+            </div>
+          </div>
+        )}
+
+        {fatal && <div style={{ background: "#f08a5d1a", color: "var(--coral)", borderRadius: 10, padding: "10px 12px", fontSize: ".82rem", marginBottom: 12 }}>{fatal}</div>}
+
+        <div style={{ maxHeight: 300, overflow: "auto", border: "1px solid var(--line)", borderRadius: 12, marginBottom: 12 }}>
+          {rows.map((r) => (
+            <div key={r.student.id} className="flex items-center justify-between gap-2" style={{ padding: "8px 12px", borderBottom: "1px solid var(--line)" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: ".88rem" }}>{r.student.nom}</div>
+                <div style={{ fontSize: ".72rem", color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.email || "—"}{status[r.student.id]?.s === "error" ? ` · ${status[r.student.id].m}` : ""}</div>
+              </div>
+              {badge(r)}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontSize: ".78rem", color: "var(--muted)", marginBottom: 10, display: "grid", gap: 4 }}>
+          {noEmail > 0 && <div>{noEmail} sense email vàlid (no s'enviaran).</div>}
+          {incomplete > 0 && <div>{incomplete} amb l'avaluació incompleta (no s'enviaran).</div>}
+          {notReady > 0 && (
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="checkbox" checked={includeNotReady} disabled={running} onChange={(e) => setIncludeNotReady(e.target.checked)} />
+              Incloure els {notReady} avaluats que el monitor encara no ha marcat com a llestos
+            </label>
+          )}
+          {already > 0 && (
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="checkbox" checked={resend} disabled={running} onChange={(e) => setResend(e.target.checked)} />
+              Tornar a enviar als {already} que ja l'han rebut
+            </label>
+          )}
+        </div>
+
+        {running ? (
+          <div className="flex items-center justify-between gap-2">
+            <div style={{ fontSize: ".85rem" }}><Loader2 size={14} className="animate-spin" style={{ display: "inline", marginRight: 6 }} />Enviant {done} de {total}…</div>
+            <button className="sn-btn sn-btn-ghost" onClick={() => { cancelRef.current = true; }}>Aturar</button>
+          </div>
+        ) : confirm ? (
+          <div className="flex gap-2">
+            <button className="sn-btn sn-btn-primary w-full justify-center" onClick={run}><Send size={16} /> Confirmar: enviar a {toSend.length} famíli{toSend.length === 1 ? "a" : "es"}</button>
+            <button className="sn-btn sn-btn-ghost" onClick={() => setConfirm(false)}>Cancel·lar</button>
+          </div>
+        ) : (
+          <button className="sn-btn sn-btn-primary w-full justify-center" style={{ opacity: toSend.length && sendKey ? 1 : .5 }} disabled={!toSend.length || !sendKey} onClick={() => setConfirm(true)}>
+            <Send size={16} /> {toSend.length ? `Enviar ${toSend.length} correu${toSend.length === 1 ? "" : "s"}` : "No hi ha res per enviar"}
+          </button>
+        )}
+        {sendKey && !running && <button className="sn-btn sn-btn-ghost" style={{ fontSize: ".72rem", padding: ".3rem .5rem", marginTop: 8 }} onClick={() => { setSendKey(""); setKeyState(""); }}>Canviar el codi d'enviament</button>}
+      </div>
+
+      {/* Diploma renderitzat fora de pantalla, amb amplada fixa, per a fer el PDF */}
+      {current && (
+        <div ref={offRef} data-pdf-root style={{ position: "fixed", left: -10000, top: 0, width: 720, background: "#fff", display: "grid", gap: 16 }}>
+          <Diploma student={current.student} level={level} group={group} scores={current.scores} recOverride={current.recOverride} comment={current.comment} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================ SEGUIMENT (coordinació) ============================ */
+const FILTERS = [
+  { id: "tots", label: "Tots", test: () => true },
+  { id: "pend", label: "Sense avaluar", test: (st) => st === "pendent" || st === "encurs" },
+  { id: "aval", label: "Avaluats", test: (st) => st === "avaluat" },
+  { id: "llest", label: "Diploma llest", test: (st) => st === "llest" },
+  { id: "env", label: "Enviats", test: (st) => st === "enviat" },
+];
+
+function Seguiment({ students, evals, setEvals }) {
+  const [open, setOpen] = useState(null); // monitor desplegat
+  const [filter, setFilter] = useState("tots");
+  const [diplomaGroup, setDiplomaGroup] = useState(null);
+  const actions = makeDiplomaActions(evals, setEvals);
+
+  const data = useMemo(() => {
+    const names = [...MONITORS, ...(GROUPS.some((g) => !g.monitor) ? [UNASSIGNED] : [])];
+    const empty = () => ({ total: 0, pendent: 0, encurs: 0, avaluat: 0, llest: 0, enviat: 0 });
+    const totals = empty();
+    const monitors = names.map((nom) => {
+      const groups = GROUPS.filter((g) => monitorOf(g) === nom).map((g) => {
+        const kids = students.filter((s) => s.grupId === g.id).map((s) => ({ s, st: studentStatus(s, evals) }))
+          .sort((a, b) => a.s.nom.localeCompare(b.s.nom));
+        return { g, kids };
+      });
+      const c = empty();
+      groups.forEach(({ kids }) => kids.forEach(({ st }) => { c.total++; c[st]++; totals.total++; totals[st]++; }));
+      return { nom, groups, c };
+    });
+    return { monitors, totals };
+  }, [students, evals]);
+
+  const evaluated = (c) => c.avaluat + c.llest + c.enviat;
+  const f = FILTERS.find((x) => x.id === filter);
+  const T = data.totals;
+
+  const Stat = ({ label, value, c }) => (
+    <div className="sn-card sn-shadow" style={{ background: "#fff", padding: "12px 14px" }}>
+      <div style={{ fontSize: ".72rem", color: "var(--muted)" }}>{label}</div>
+      <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.5rem", color: c || "var(--deep)" }}>{value}</div>
+    </div>
+  );
+
+  const dg = diplomaGroup && groupById(diplomaGroup);
+  const sf = (sid) => evals[evKey(sid)]?.scores || {};
+  const of = (sid) => evals[evKey(sid)]?.override || null;
+  const cf = (sid) => { const e = evals[evKey(sid)]; return e && "comment" in e ? e.comment : null; };
+
+  return (
+    <div>
+      <h2 className="sn-display" style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: 4 }}>Seguiment per monitor</h2>
+      <p style={{ color: "var(--muted)", marginBottom: 16 }}>Alumnes de cada monitor, qui està avaluat i quins diplomes estan llestos per a enviar.</p>
+
+      <div className="grid gap-3 mb-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))" }}>
+        <Stat label="Alumnes" value={T.total} />
+        <Stat label="Avaluats" value={evaluated(T)} c="#2f6f9f" />
+        <Stat label="Diplomes llestos" value={T.llest} c="#1f7a6f" />
+        <Stat label="Enviats" value={T.enviat} />
+      </div>
+
+      <div className="flex gap-1.5 flex-wrap mb-4">
+        {FILTERS.map((x) => (
+          <button key={x.id} className="sn-pill" style={{ border: "none", cursor: "pointer", padding: ".35rem .8rem", background: filter === x.id ? "var(--deep)" : "#fff", color: filter === x.id ? "#fff" : "var(--deep)" }} onClick={() => setFilter(x.id)}>{x.label}</button>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gap: 10 }}>
+        {data.monitors.map(({ nom, groups, c }) => {
+          const isOpen = open === nom;
+          const pct = c.total ? Math.round((evaluated(c) / c.total) * 100) : 0;
+          return (
+            <div key={nom} className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden" }}>
+              <div className="sn-row" style={{ padding: "14px 16px", cursor: groups.length ? "pointer" : "default" }} onClick={() => groups.length && setOpen(isOpen ? null : nom)}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-3" style={{ minWidth: 0 }}>
+                    <div style={{ width: 38, height: 38, borderRadius: 11, background: "var(--surface)", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                      <User size={18} color={nom === UNASSIGNED ? "var(--coral)" : "var(--deep)"} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="sn-display" style={{ fontWeight: 700, color: nom === UNASSIGNED ? "var(--coral)" : "var(--ink)" }}>{nom}</div>
+                      <div style={{ fontSize: ".76rem", color: "var(--muted)" }}>
+                        {groups.length === 0 ? "Encara sense grups assignats" : `${groups.length} grup${groups.length === 1 ? "" : "s"} · ${c.total} alumnes`}
+                      </div>
+                    </div>
+                  </div>
+                  {groups.length > 0 && <ChevronRight size={18} color="var(--muted)" style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: ".15s", flexShrink: 0 }} />}
+                </div>
+                {c.total > 0 && (
+                  <>
+                    <div style={{ height: 6, background: "var(--surface)", borderRadius: 99, margin: "10px 0 8px", overflow: "hidden" }}>
+                      <div style={{ width: pct + "%", height: "100%", background: "var(--aqua)" }} />
+                    </div>
+                    <div className="flex gap-3 flex-wrap" style={{ fontSize: ".76rem", color: "var(--muted)" }}>
+                      <span><b style={{ color: "#2f6f9f" }}>{evaluated(c)}</b>/{c.total} avaluats</span>
+                      <span><b style={{ color: "#1f7a6f" }}>{c.llest}</b> llestos</span>
+                      <span><b style={{ color: "var(--deep)" }}>{c.enviat}</b> enviats</span>
+                      {c.pendent + c.encurs > 0 && <span style={{ color: "var(--coral)" }}>{c.pendent + c.encurs} sense avaluar</span>}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {isOpen && groups.map(({ g, kids }) => {
+                const shown = kids.filter(({ st }) => f.test(st));
+                const readyHere = kids.filter(({ st }) => st === "llest").length;
+                return (
+                  <div key={g.id} style={{ borderTop: "1px solid var(--line)" }}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap" style={{ padding: "10px 16px", background: "var(--surface)" }}>
+                      <div style={{ fontSize: ".82rem" }}><b>{g.nivell}</b> <span style={{ color: "var(--muted)" }}>· {g.dia} {g.hora}</span></div>
+                      <button className="sn-btn sn-btn-dark" style={{ padding: ".4rem .7rem", fontSize: ".76rem" }} onClick={() => setDiplomaGroup(g.id)}>
+                        <Award size={14} /> Diplomes{readyHere ? ` (${readyHere} llestos)` : ""}
+                      </button>
+                    </div>
+                    {shown.length === 0 && <div style={{ padding: "10px 16px", fontSize: ".8rem", color: "var(--muted)" }}>Cap alumne amb aquest filtre.</div>}
+                    {shown.map(({ s, st }) => (
+                      <div key={s.id} className="flex items-center justify-between gap-2" style={{ padding: "8px 16px", borderTop: "1px solid var(--surface)" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600, fontSize: ".86rem" }}>{s.nom}</div>
+                          <div style={{ fontSize: ".72rem", color: s.email ? "var(--muted)" : "var(--coral)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.email || "sense email"}</div>
+                        </div>
+                        <StatusPill st={st} />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+
+      {dg && (
+        <DiplomaModal students={students.filter((s) => s.grupId === dg.id)} level={dg.nivell} group={dg}
+          scoresFor={sf} overrideFor={of} commentFor={cf} canSend actions={actions} onClose={() => setDiplomaGroup(null)} />
+      )}
+    </div>
   );
 }
 
@@ -1096,8 +1504,9 @@ function Tauler({ students, evals }) {
       perLevel[g.nivell][r.result]++;
       const done = r.result !== "PENDENT";
       if (done) { avaluats++; avgSum += r.avg; avgN++; }
-      if (!perMonitor[g.monitor]) perMonitor[g.monitor] = { total: 0, avaluats: 0 };
-      perMonitor[g.monitor].total++; if (done) perMonitor[g.monitor].avaluats++;
+      const mn = monitorOf(g);
+      if (!perMonitor[mn]) perMonitor[mn] = { total: 0, avaluats: 0 };
+      perMonitor[mn].total++; if (done) perMonitor[mn].avaluats++;
       const af = finalRecommendation(g.nivell, sc, studentAge(s), evals[`25-26:${s.id}`]?.override || null);
       if (af.agePromoted) agePromos++;
       if (nextByLevel[af.rec] != null) nextByLevel[af.rec]++;
@@ -1499,24 +1908,35 @@ function Dades({ students, setStudents, setEvals }) {
         const wb = XLSX.read(ev.target.result, { type: "binary", cellDates: true });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws);
-        const imported = rows.map((r) => {
+        const parsed = rows.map((r) => {
           const id = r["Cod. Usuari"] ?? r["Cod"] ?? r["id"] ?? r["ID"];
-          const grupId = +(r["GrupID"] ?? r["Grup"] ?? GROUPS[0].id);
+          const rawGrup = r["GrupID"] ?? r["Grup ID"] ?? r["Grup"] ?? r["Grupo"];
+          const grupId = rawGrup == null || String(rawGrup).trim() === "" ? null : +rawGrup;
           const email = String(r["Email"] || r["email"] || r["Correu"] || r["Correo"] || "").trim();
           const rawBirth = r["Naixement"] ?? r["Data naixement"] ?? r["Data de naixement"] ?? r["Nacimiento"] ?? r["naixement"];
           const bd = parseDate(rawBirth);
           const naixement = bd ? `${bd.getFullYear()}-${String(bd.getMonth() + 1).padStart(2, "0")}-${String(bd.getDate()).padStart(2, "0")}` : "";
           const edat = naixement ? ageAtSeason(naixement) : +(r["Edat"] || r["edat"] || 0);
           return { id: +id, nom: String(r["Nom"] || r["nom"] || "").trim(), email, naixement, edat, grupId };
-        }).filter((s) => s.id && s.nom && groupById(s.grupId));
-        if (imported.length === 0) { setMsg({ t: "err", m: "No s'ha trobat cap fila vàlida. Revisa que el full tinga les columnes Cod. Usuari, Nom, Email, Naixement, GrupID." }); return; }
+        });
+        // Ja no s'assigna cap grup per defecte: les files sense grup o amb un grup que no existeix es descarten i s'avisa
+        const sensePart = parsed.filter((s) => !s.id || !s.nom).length;
+        const senseGrup = parsed.filter((s) => s.id && s.nom && s.grupId == null).length;
+        const grupsDesconeguts = [...new Set(parsed.filter((s) => s.id && s.nom && s.grupId != null && !groupById(s.grupId)).map((s) => s.grupId))];
+        const imported = parsed.filter((s) => s.id && s.nom && groupById(s.grupId));
+        const avisos = [];
+        if (sensePart) avisos.push(`${sensePart} sense codi o nom`);
+        if (senseGrup) avisos.push(`${senseGrup} sense GrupID`);
+        if (grupsDesconeguts.length) avisos.push(`${parsed.filter((s) => grupsDesconeguts.includes(s.grupId)).length} amb un grup que no existeix a l'app (${grupsDesconeguts.slice(0, 8).join(", ")}${grupsDesconeguts.length > 8 ? "…" : ""})`);
+        const descartades = avisos.length ? ` Files descartades: ${avisos.join("; ")}.` : "";
+        if (imported.length === 0) { setMsg({ t: "err", m: `No s'ha importat cap alumne. Revisa que el full tinga les columnes Cod. Usuari, Nom, Email, Naixement, GrupID.${descartades}` }); return; }
         const ambData = imported.filter((s) => s.naixement).length;
         setStudents((prev) => {
           const map = new Map(prev.map((s) => [s.id, s]));
           imported.forEach((s) => map.set(s.id, s));
           return [...map.values()];
         });
-        setMsg({ t: "ok", m: `${imported.length} alumnes importats (${ambData} amb data de naixement).` });
+        setMsg({ t: avisos.length ? "err" : "ok", m: `${imported.length} alumnes importats (${ambData} amb data de naixement).${descartades}` });
       } catch { setMsg({ t: "err", m: "No s'ha pogut llegir el fitxer. Assegura't que és un .xlsx vàlid." }); }
     };
     reader.readAsBinaryString(file);
@@ -1584,7 +2004,7 @@ function Dades({ students, setStudents, setEvals }) {
                     <div style={{ fontSize: ".72rem", color: s.email ? "var(--muted)" : "var(--coral)" }}>{s.email || "sense email"}</div>
                   </div>
                 </div>
-                <span style={{ color: "var(--muted)", fontSize: ".8rem" }}>{g.nivell} · {g.hora}</span>
+                <span style={{ color: "var(--muted)", fontSize: ".8rem" }}>{g ? `${g.nivell} · ${g.hora}` : "Sense grup"}</span>
               </div>
             );
           })}
