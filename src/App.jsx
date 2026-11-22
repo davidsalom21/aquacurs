@@ -3,7 +3,7 @@ import {
   Waves, Users, ClipboardList, BarChart3, Dumbbell, Database, ChevronRight,
   ChevronLeft, Printer, Check, Award, AlertTriangle, ArrowUpRight, Minus,
   RotateCcw, Upload, Download, Search, X, Loader2, FileSpreadsheet, Sparkles,
-  Calendar, Clock, User, Mail, Send
+  Calendar, Clock, User, Mail, Send, Trash2, UserMinus
 } from "lucide-react";
 import {
   waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, getSendKey, setSendKey, EMAIL_RE
@@ -253,6 +253,92 @@ function StatusPill({ st }) {
   return <span className="sn-pill" style={{ background: m.c + "1a", color: m.c, whiteSpace: "nowrap" }}>{st === "enviat" ? <Mail size={11} /> : st === "llest" ? <Award size={11} /> : null}{m.label}</span>;
 }
 
+/* ---------- Baixes d'alumnes ---------- */
+// El monitor avisa (student.baixa = { at, per, motiu }) i coordinació esborra o descarta l'avís
+function setBaixaRequest(setStudents, sid, baixa) {
+  setStudents((prev) => prev.map((s) => {
+    if (s.id !== sid) return s;
+    if (!baixa) { const { baixa: _b, ...rest } = s; return rest; }
+    return { ...s, baixa };
+  }));
+}
+function deleteStudentEverywhere(setStudents, setEvals, sid) {
+  setStudents((prev) => prev.filter((s) => s.id !== sid));
+  setEvals((prev) => { const next = { ...prev }; delete next[evKey(sid)]; return next; });
+}
+function BaixaPill() {
+  return <span className="sn-pill" style={{ background: "#f08a5d22", color: "var(--coral)", whiteSpace: "nowrap" }}><UserMinus size={11} /> Avís de baixa</span>;
+}
+// Botó d'esborrar amb confirmació en dos tocs (es desarma sol als 5 segons)
+function ConfirmDelete({ onConfirm, compact, label = "Esborrar alumne" }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { if (!armed) return; const t = setTimeout(() => setArmed(false), 5000); return () => clearTimeout(t); }, [armed]);
+  const stop = (e) => e.stopPropagation();
+  if (armed) return (
+    <span className="flex items-center gap-1.5" onClick={stop}>
+      <button className="sn-btn" style={{ background: "var(--coral)", color: "#fff", padding: compact ? ".35rem .6rem" : ".55rem .85rem", fontSize: compact ? ".74rem" : ".84rem" }} onClick={onConfirm}>
+        <Trash2 size={14} /> Sí, esborrar
+      </button>
+      <button className="sn-btn sn-btn-ghost" style={{ padding: compact ? ".35rem .5rem" : ".55rem .7rem" }} onClick={() => setArmed(false)}><X size={14} /></button>
+    </span>
+  );
+  return compact ? (
+    <button className="sn-btn sn-btn-ghost" title={label} style={{ padding: ".35rem .5rem", color: "var(--coral)" }} onClick={(e) => { stop(e); setArmed(true); }}><Trash2 size={15} /></button>
+  ) : (
+    <button className="sn-btn sn-btn-ghost w-full justify-center" style={{ color: "var(--coral)" }} onClick={() => setArmed(true)}><Trash2 size={15} /> {label}</button>
+  );
+}
+const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString("ca-ES"); } catch { return ""; } };
+
+// Panell de baixa a la fitxa de l'alumne
+function BaixaPanel({ student, isCoord, monitorName, setStudents, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [motiu, setMotiu] = useState("");
+  const b = student.baixa;
+  const box = { background: "#f08a5d14", border: "1px solid #f08a5d55", borderRadius: 10, padding: "10px 12px", fontSize: ".8rem", color: "#9a4a2a", marginBottom: 8 };
+
+  if (!isCoord) {
+    if (b) return (
+      <div style={box}>
+        <div className="flex items-center gap-1.5" style={{ fontWeight: 700, marginBottom: 3 }}><UserMinus size={14} /> Avís de baixa enviat ({fmtDate(b.at)})</div>
+        {b.motiu && <div style={{ marginBottom: 4 }}>«{b.motiu}»</div>}
+        <div style={{ color: "var(--muted)", marginBottom: 6 }}>Coordinació el revisarà i l'esborrarà.</div>
+        <button className="sn-btn sn-btn-ghost" style={{ padding: ".35rem .6rem", fontSize: ".74rem" }} onClick={() => setBaixaRequest(setStudents, student.id, null)}>Anul·lar l'avís</button>
+      </div>
+    );
+    if (!open) return (
+      <button className="sn-btn sn-btn-ghost w-full justify-center" style={{ color: "var(--coral)" }} onClick={() => setOpen(true)}><UserMinus size={15} /> Avisar baixa a coordinació</button>
+    );
+    return (
+      <div style={box}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Avisar que {student.nom.split(" ")[0]} s'ha donat de baixa</div>
+        <textarea className="sn-input" rows={2} style={{ fontSize: ".8rem", marginBottom: 8 }} placeholder="Motiu o comentari (opcional)" value={motiu} onChange={(e) => setMotiu(e.target.value)} />
+        <div className="flex gap-2">
+          <button className="sn-btn" style={{ background: "var(--coral)", color: "#fff", padding: ".45rem .8rem", fontSize: ".8rem" }}
+            onClick={() => { setBaixaRequest(setStudents, student.id, { at: new Date().toISOString(), per: monitorName || "", motiu: motiu.trim() }); setOpen(false); setMotiu(""); }}>
+            Enviar avís
+          </button>
+          <button className="sn-btn sn-btn-ghost" style={{ padding: ".45rem .8rem", fontSize: ".8rem" }} onClick={() => { setOpen(false); setMotiu(""); }}>Cancel·lar</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Coordinació
+  return (
+    <div>
+      {b && (
+        <div style={box}>
+          <div className="flex items-center gap-1.5" style={{ fontWeight: 700, marginBottom: 3 }}><UserMinus size={14} /> {b.per || "El monitor"} ha avisat de baixa ({fmtDate(b.at)})</div>
+          {b.motiu && <div style={{ marginBottom: 6 }}>«{b.motiu}»</div>}
+          <button className="sn-btn sn-btn-ghost" style={{ padding: ".35rem .6rem", fontSize: ".74rem" }} onClick={() => setBaixaRequest(setStudents, student.id, null)}>Descartar l'avís</button>
+        </div>
+      )}
+      <ConfirmDelete onConfirm={onDelete} />
+    </div>
+  );
+}
+
 /* ============================ LÒGICA ============================ */
 function computeResult(level, scores) {
   const items = itemsOf(level);
@@ -476,7 +562,7 @@ function RoleSelect({ onPick }) {
       <style>{CSS}</style>
       <header style={{ background: "var(--deep)", color: "#fff" }}>
         <div style={{ maxWidth: 1180, margin: "0 auto", padding: "16px 20px" }} className="flex items-center gap-3">
-          <div style={{ width: 40, height: 40, borderRadius: 12, background: "var(--aqua)", display: "grid", placeItems: "center" }}><Waves size={22} color="#063b34" /></div>
+          <img src="/icon-192.png" alt="AquaCurs" style={{ width: 40, height: 40, borderRadius: 11, display: "block", flexShrink: 0 }} />
           <div>
             <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.18rem", lineHeight: 1 }}>AquaCurs</div>
             <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>Escola de Natació · Temporada 25-26</div>
@@ -541,9 +627,7 @@ export default function App() {
       <header className="no-print" style={{ background: "var(--deep)", color: "#fff" }}>
         <div style={{ maxWidth: 1180, margin: "0 auto", padding: "16px 20px" }} className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <div style={{ width: 40, height: 40, borderRadius: 12, background: "var(--aqua)", display: "grid", placeItems: "center" }}>
-              <Waves size={22} color="#063b34" />
-            </div>
+            <img src="/icon-192.png" alt="AquaCurs" style={{ width: 40, height: 40, borderRadius: 11, display: "block", flexShrink: 0 }} />
             <div>
               <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.18rem", lineHeight: 1 }}>AquaCurs</div>
               <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>Avaluació · Diplomes · Gestió d'escola de natació</div>
@@ -566,7 +650,7 @@ export default function App() {
       </header>
 
       <main key={role} style={{ maxWidth: 1180, margin: "0 auto", padding: "22px 20px 60px" }}>
-        {activeTab === "segu" && <Seguiment students={students} evals={evals} setEvals={setEvals} />}
+        {activeTab === "segu" && <Seguiment students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
         {activeTab === "aval" && <Avaluacio role={role} students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
         {activeTab === "taul" && <Tauler students={students} evals={evals} />}
         {activeTab === "ruti" && <Rutines />}
@@ -700,7 +784,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
   );
 
   /* --- Llista alumnes del grup --- */
-  if (!studentId) return (
+  if (!studentId || !student) return (
     <div>{crumb}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
         <h2 className="sn-display" style={{ fontSize: "1.4rem", fontWeight: 800 }}>{group.nivell} · {group.hora}</h2>
@@ -724,6 +808,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                {s.baixa && <BaixaPill />}
                 {isAtLeast(studentStatus(s, evals), "llest") && <StatusPill st={studentStatus(s, evals)} />}
                 {af.agePromoted && <span className="sn-pill" style={{ background: "var(--sun)1c", color: "#8a5a10" }} title="Promociona per edat"><AlertTriangle size={11} /> edat</span>}
                 <span className="sn-pill" style={{ background: m.c + "1a", color: m.c }}><m.icon size={12} /> {af.result}</span>
@@ -838,6 +923,10 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
               )}
             </div>
             <SingleDiplomaButton student={student} level={group.nivell} group={group} scores={scores} recOverride={override} comment={effComment} canSend={isCoord} actions={diplomaActions} />
+            <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: 14 }}>
+              <BaixaPanel student={student} isCoord={isCoord} monitorName={monitor || group.monitor} setStudents={setStudents}
+                onDelete={() => { const sid = studentId; setStudentId(null); deleteStudentEverywhere(setStudents, setEvals, sid); }} />
+            </div>
           </div>
         </div>
       </div>
@@ -1361,7 +1450,7 @@ const FILTERS = [
   { id: "env", label: "Enviats", test: (st) => st === "enviat" },
 ];
 
-function Seguiment({ students, evals, setEvals }) {
+function Seguiment({ students, setStudents, evals, setEvals }) {
   const [open, setOpen] = useState(null); // monitor desplegat
   const [filter, setFilter] = useState("tots");
   const [diplomaGroup, setDiplomaGroup] = useState(null);
@@ -1396,6 +1485,7 @@ function Seguiment({ students, evals, setEvals }) {
   );
 
   const dg = diplomaGroup && groupById(diplomaGroup);
+  const avisos = students.filter((s) => s.baixa).sort((a, b) => (a.baixa.at || "").localeCompare(b.baixa.at || ""));
   const sf = (sid) => evals[evKey(sid)]?.scores || {};
   const of = (sid) => evals[evKey(sid)]?.override || null;
   const cf = (sid) => { const e = evals[evKey(sid)]; return e && "comment" in e ? e.comment : null; };
@@ -1411,6 +1501,32 @@ function Seguiment({ students, evals, setEvals }) {
         <Stat label="Diplomes llestos" value={T.llest} c="#1f7a6f" />
         <Stat label="Enviats" value={T.enviat} />
       </div>
+
+      {avisos.length > 0 && (
+        <div className="sn-card sn-shadow mb-4" style={{ background: "#fff", overflow: "hidden", border: "1px solid #f08a5d66" }}>
+          <div className="flex items-center gap-2" style={{ padding: "12px 16px", background: "#f08a5d14", color: "#9a4a2a", fontWeight: 700 }}>
+            <UserMinus size={17} /> Avisos de baixa ({avisos.length})
+          </div>
+          {avisos.map((s) => {
+            const g = groupById(s.grupId);
+            return (
+              <div key={s.id} className="flex items-center justify-between gap-2 flex-wrap" style={{ padding: "10px 16px", borderTop: "1px solid var(--line)" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: ".88rem" }}>{s.nom}</div>
+                  <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>
+                    {g ? `${g.nivell} · ${g.dia} ${g.hora}` : "Sense grup"} · avisat per {s.baixa.per || "—"} el {fmtDate(s.baixa.at)}
+                  </div>
+                  {s.baixa.motiu && <div style={{ fontSize: ".76rem", color: "#9a4a2a", marginTop: 2 }}>«{s.baixa.motiu}»</div>}
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button className="sn-btn sn-btn-ghost" style={{ padding: ".35rem .6rem", fontSize: ".74rem" }} onClick={() => setBaixaRequest(setStudents, s.id, null)}>Descartar</button>
+                  <ConfirmDelete compact onConfirm={() => deleteStudentEverywhere(setStudents, setEvals, s.id)} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="flex gap-1.5 flex-wrap mb-4">
         {FILTERS.map((x) => (
@@ -1472,7 +1588,7 @@ function Seguiment({ students, evals, setEvals }) {
                           <div style={{ fontWeight: 600, fontSize: ".86rem" }}>{s.nom}</div>
                           <div style={{ fontSize: ".72rem", color: s.email ? "var(--muted)" : "var(--coral)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.email || "sense email"}</div>
                         </div>
-                        <StatusPill st={st} />
+                        <div className="flex items-center gap-1.5">{s.baixa && <BaixaPill />}<StatusPill st={st} /></div>
                       </div>
                     ))}
                   </div>
@@ -2004,7 +2120,11 @@ function Dades({ students, setStudents, setEvals }) {
                     <div style={{ fontSize: ".72rem", color: s.email ? "var(--muted)" : "var(--coral)" }}>{s.email || "sense email"}</div>
                   </div>
                 </div>
-                <span style={{ color: "var(--muted)", fontSize: ".8rem" }}>{g ? `${g.nivell} · ${g.hora}` : "Sense grup"}</span>
+                <div className="flex items-center gap-2">
+                  {s.baixa && <BaixaPill />}
+                  <span style={{ color: "var(--muted)", fontSize: ".8rem" }}>{g ? `${g.nivell} · ${g.hora}` : "Sense grup"}</span>
+                  <ConfirmDelete compact onConfirm={() => { deleteStudentEverywhere(setStudents, setEvals, s.id); setMsg({ t: "ok", m: `Alumne esborrat: ${s.nom}.` }); }} />
+                </div>
               </div>
             );
           })}

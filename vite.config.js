@@ -8,7 +8,7 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: "auto",
-      includeAssets: ["favicon.svg", "apple-touch-icon.png"],
+      includeAssets: ["favicon.png", "apple-touch-icon.png"],
       manifest: {
         name: "AquaCurs · Escola de Natació",
         short_name: "AquaCurs",
