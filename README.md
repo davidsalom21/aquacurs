@@ -69,30 +69,32 @@ Apareixerà com una app normal, amb la seua icona, pantalla completa i funcionan
 
 ---
 
-## 5) Enviament de diplomes per correu
+## 5) Base de dades (Supabase) i comptes
 
-Des de «Generar diplomes» → **Enviar per correu**, l'app crea el PDF de cada diploma (anvers i revers) i l'envia a l'email de contacte de l'alumne. L'enviament el fa la funció `api/send-diploma.js` (Vercel) a través de **Resend**. Cal tindre connexió a internet.
+Les dades (grups, alumnes, notes, diplomes) es guarden a **Supabase** i totes les persones veuen el mateix.
 
 **Configuració (una sola vegada):**
-1. Crea un compte a [resend.com](https://resend.com) i verifica un domini (Domains → Add domain). Sense domini verificat, Resend només deixa enviar al teu propi correu (per a proves).
-2. Crea una clau a API Keys.
-3. A Vercel → Project → **Settings → Environment Variables**, afig:
-   - `RESEND_API_KEY` = la clau de Resend
-   - `MAIL_FROM` = `Piscina Municipal Carcaixent <diplomes@EL-TEU-DOMINI>`
-   - `SEND_KEY` = un codi llarg inventat (és el que s'introdueix a l'app abans d'enviar)
-   - `MAIL_REPLY_TO` (opcional) = el correu on vols rebre les respostes de les famílies
-4. Torna a desplegar (Deployments → ⋯ → Redeploy) perquè agafe les variables.
+1. Supabase → **SQL Editor → New query**: enganxa tot `supabase/schema.sql` i prem **Run**. Crea les taules, els permisos i els grups inicials. Es pot tornar a executar sense perdre dades.
+2. Supabase → Authentication: desactiva **Confirm email** i **Allow new users to sign up**.
+3. Vercel → Settings → Environment Variables (Production i Preview):
+   - `VITE_SUPABASE_URL` = Project URL de Supabase
+   - `VITE_SUPABASE_PUBLISHABLE_KEY` = publishable key (o anon key)
+   - `SUPABASE_SECRET_KEY` = secret key (o service_role). **Mai al codi ni a GitHub.**
+   - `SEND_KEY` = codi de configuració (només es fa servir per a crear el primer compte de coordinació)
+4. Redeploy. Les variables `VITE_` s'agafen en compilar: si les canvies, cal tornar a desplegar.
+5. Obri l'app: la primera vegada surt **Configuració inicial** per a crear el primer compte de coordinació (cal el `SEND_KEY`). Des de la pestanya **Usuaris** es creen la resta de comptes.
 
-**A tindre en compte:**
-- El pla gratuït de Resend permet 100 correus al dia. Si s'arriba al límit, l'app s'atura i els que ja s'han enviat no es repeteixen.
-- El registre de «ja enviat» es guarda al dispositiu des del qual s'envia.
-- El `SEND_KEY` és una protecció bàsica: no el compartisques fora de l'equip de coordinació.
+**Comptes:** cada persona entra triant el seu perfil i el seu nom i escrivint el seu codi. El pot canviar des del botó **Codi** de la capçalera. Si l'oblida, coordinació el restableix a **Usuaris**. El nom dels monitors ha de coincidir amb el dels grups.
+
+## 6) Enviament de diplomes per correu
+
+Només coordinació pot enviar (es comprova amb la sessió). Variables a Vercel: `RESEND_API_KEY`, `MAIL_FROM` (adreça de `aquacurs.com`), `MAIL_REPLY_TO` (opcional). El pla gratuït de Resend permet 100 correus al dia.
 
 ---
 
 ## Coses importants que has de saber
 
-- **Les dades es guarden al dispositiu** (al navegador, amb `localStorage`). Cada mòbil/ordinador té les seues. Encara **no hi ha base de dades compartida**: això és el següent pas (Supabase o similar) quan decidiu implantar-la de veritat per a tot l'equip.
+- **Les dades es guarden a Supabase**: cal connexió a internet per a treballar. Si es perd un moment, l'app reintenta desar i ho indica a la capçalera.
 
 - **Mòdul de gimnàs:** ara fa servir el **motor propi** (rutines per regles, instantani i offline). La part d'IA necessita una clau i un xicotet backend; quan el muntem, es pot reactivar. Per a la demo, el motor propi funciona perfectament.
 

@@ -3,12 +3,13 @@
    a la família a través de Resend (https://resend.com).
 
    Variables d'entorn (Vercel → Project → Settings → Environment Variables):
-     RESEND_API_KEY  Clau de l'API de Resend (re_...)
-     MAIL_FROM       Remitent, p. ex.: Piscina Municipal Carcaixent <diplomes@el-teu-domini.es>
-     SEND_KEY        Codi d'enviament que s'introdueix a l'app (inventa'n un de llarg)
-     MAIL_REPLY_TO   (opcional) Adreça on arriben les respostes de les famílies
+     RESEND_API_KEY       Clau de l'API de Resend (re_...)
+     MAIL_FROM            Remitent, p. ex.: Piscina Municipal de Carcaixent <carcaixent@aquacurs.com>
+     MAIL_REPLY_TO        (opcional) Adreça on arriben les respostes de les famílies
+     VITE_SUPABASE_URL    URL del projecte de Supabase
+     SUPABASE_SECRET_KEY  Clau secreta de Supabase (per a comprovar que qui envia és de coordinació)
    ============================================================ */
-import { timingSafeEqual } from "node:crypto";
+import { adminClient, getCaller, isCoordRole } from "../lib/supa.js";
 
 const MAX_PDF_B64 = 3_000_000; // ~2,2 MB de PDF (límit de Vercel: 4,5 MB per petició)
 const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
@@ -16,24 +17,21 @@ const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const clip = (s, n) => String(s ?? "").trim().slice(0, n);
 
-function sameKey(a, b) {
-  const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Mètode no permés." });
   }
 
-  const { RESEND_API_KEY, MAIL_FROM, SEND_KEY, MAIL_REPLY_TO } = process.env;
-  if (!RESEND_API_KEY || !MAIL_FROM || !SEND_KEY) {
+  const { RESEND_API_KEY, MAIL_FROM, MAIL_REPLY_TO } = process.env;
+  const admin = adminClient();
+  if (!RESEND_API_KEY || !MAIL_FROM || !admin) {
     return res.status(500).json({ error: "El servidor no està configurat (falten variables d'entorn a Vercel)." });
   }
-  if (!sameKey(req.headers["x-send-key"], SEND_KEY)) {
-    return res.status(401).json({ error: "Codi d'enviament incorrecte." });
-  }
+  // Només coordinació pot enviar (es comprova amb la sessió de Supabase)
+  const caller = await getCaller(req, admin);
+  if (!caller) return res.status(401).json({ error: "La sessió ha caducat. Torna a entrar." });
+  if (!isCoordRole(caller.rol)) return res.status(403).json({ error: "Només coordinació pot enviar diplomes." });
 
   const body = req.body || {};
   const to = clip(body.to, 254);
@@ -43,6 +41,7 @@ export default async function handler(req, res) {
   const season = clip(body.season, 10);
   const pdfBase64 = String(body.pdfBase64 || "");
   const filename = clip(body.filename, 120).replace(/[^\w.\-]/g, "_") || "Diploma.pdf";
+  const studentId = Number.isInteger(body.studentId) ? body.studentId : null;
 
   if (!EMAIL_RE.test(to)) return res.status(400).json({ error: "L'adreça de correu no és vàlida." });
   if (!studentName) return res.status(400).json({ error: "Falta el nom de l'alumne." });
@@ -95,6 +94,10 @@ Piscina Municipal de Carcaixent`;
     const msg = data.message || data.error || `Error ${r.status}`;
     // 429 = massa enviaments o límit diari del pla gratuït (100/dia)
     return res.status(r.status === 429 ? 429 : 502).json({ error: r.status === 429 ? `Límit d'enviaments: ${msg}` : `Resend: ${msg}` });
+  }
+  // Es deixa constància de l'enviament a la base de dades
+  if (studentId) {
+    await admin.from("evaluations").update({ sent_at: new Date().toISOString(), sent_to: to }).eq("season", season || "25-26").eq("student_id", studentId);
   }
   return res.status(200).json({ ok: true, id: data.id });
 }

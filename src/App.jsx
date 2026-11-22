@@ -1,13 +1,15 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Waves, Users, ClipboardList, BarChart3, Dumbbell, Database, ChevronRight,
   ChevronLeft, Printer, Check, Award, AlertTriangle, ArrowUpRight, Minus,
   RotateCcw, Upload, Download, Search, X, Loader2, FileSpreadsheet, Sparkles,
-  Calendar, Clock, User, Mail, Send, Trash2, UserMinus
+  Calendar, Clock, User, Mail, Send, Trash2, UserMinus, KeyRound, LogOut
 } from "lucide-react";
 import {
-  waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, getSendKey, setSendKey, EMAIL_RE
+  waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, EMAIL_RE
 } from "./diplomaPdf.js";
+import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey } from "./db.js";
+import { Login, ConfigMissing, ChangePasswordModal, UsersPanel, GroupsPanel } from "./auth.jsx";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   Legend, Cell, PieChart, Pie
@@ -52,6 +54,10 @@ const CSS = `
 .sn-input{width:100%;border:1px solid var(--line);border-radius:12px;padding:.7rem .85rem;font-family:'Inter';font-size:.95rem;background:#fff}
 .sn-input:focus{outline:none;border-color:var(--aqua)}
 .lane{height:6px;border-radius:6px;background:repeating-linear-gradient(90deg,var(--cyan) 0 14px,transparent 14px 26px);opacity:.5}
+/* FITXA D'ALUMNE: dues columnes en pantalla gran, una en mòbil */
+.eval-grid{display:grid;gap:20px;grid-template-columns:minmax(0,1fr) 320px;align-items:start}
+.eval-side{position:sticky;top:16px}
+@media (max-width:760px){.eval-grid{grid-template-columns:minmax(0,1fr)}.eval-side{position:static}}
 /* DIPLOMA */
 .dip{background:var(--paper);color:#23303a;border-radius:14px;padding:30px 34px;position:relative;overflow:hidden;border:1px solid #e7dcc2;min-height:440px}
 .dip:before{content:"";position:absolute;inset:10px;border:2px solid var(--dipaccent,var(--gold));border-radius:8px;opacity:.5;pointer-events:none}
@@ -196,7 +202,7 @@ const ITEMS = {
 };
 const itemsOf = (lvl) => (ITEMS[lvl] || []).filter((x) => x.id);
 
-// Grups (de l'Excel original, simplificat)
+// Grups: es carreguen de Supabase en iniciar sessió (aquesta llista només és el valor inicial)
 const GROUPS = [
   { id: 6252, nivell: "Infants Baix", dia: "Dilluns i dimecres", hora: "17:45h", monitor: "David" },
   { id: 6264, nivell: "Nadons Alt", dia: "Dilluns i dimecres", hora: "18:30h", monitor: "David" },
@@ -219,8 +225,8 @@ const GROUPS = [
 const groupName = (g) => `${g.nivell} · ${g.dia} ${g.hora}`;
 const groupById = (id) => GROUPS.find((g) => g.id === id);
 
-// Monitors amb cursos de natació (temporada 25-26)
-const MONITORS = ["David", "Dave", "Aitor", "Guillem", "Vanesa", "Jordi", "Ana", "Alicia", "Clara"];
+// Monitors: es carreguen de Supabase (comptes amb rol de monitor)
+const MONITORS = [];
 const UNASSIGNED = "Sense assignar";
 const monitorOf = (g) => (g && g.monitor) || UNASSIGNED;
 
@@ -552,58 +558,133 @@ async function storeSet(k, v) { try { localStorage.setItem("aquacurs:" + k, JSON
 /* ============================ ROLS ============================ */
 const ROLES = {
   monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["aval"], defaultTab: "aval" },
-  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "taul", "dades"], defaultTab: "segu" },
-  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "taul", "ruti", "dades"], defaultTab: "taul" },
+  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "taul", "dades", "usu"], defaultTab: "segu" },
+  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
 };
-
-function RoleSelect({ onPick }) {
-  return (
-    <div className="sn-root" style={{ minHeight: "100vh" }}>
-      <style>{CSS}</style>
-      <header style={{ background: "var(--deep)", color: "#fff" }}>
-        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "16px 20px" }} className="flex items-center gap-3">
-          <img src="/icon-192.png" alt="AquaCurs" style={{ width: 40, height: 40, borderRadius: 11, display: "block", flexShrink: 0 }} />
-          <div>
-            <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.18rem", lineHeight: 1 }}>AquaCurs</div>
-            <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>Escola de Natació · Temporada 25-26</div>
-          </div>
-        </div>
-      </header>
-      <main style={{ maxWidth: 900, margin: "0 auto", padding: "44px 20px", width: "100%" }}>
-        <h2 className="sn-display" style={{ fontSize: "1.7rem", fontWeight: 800, marginBottom: 4 }}>Qui ets?</h2>
-        <p style={{ color: "var(--muted)", marginBottom: 24 }}>Tria el teu perfil per a entrar.</p>
-        <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))" }}>
-          {Object.entries(ROLES).map(([id, r]) => (
-            <button key={id} className="sn-card sn-shadow sn-row" style={{ padding: 22, textAlign: "left", background: "#fff" }} onClick={() => onPick(id)}>
-              <div style={{ width: 48, height: 48, borderRadius: 14, background: "var(--surface)", display: "grid", placeItems: "center", marginBottom: 12 }}>
-                <r.icon size={24} color="var(--deep)" />
-              </div>
-              <div className="sn-display" style={{ fontWeight: 700, fontSize: "1.05rem", marginBottom: 4 }}>{r.label}</div>
-              <div style={{ fontSize: ".85rem", color: "var(--muted)", lineHeight: 1.45 }}>{r.desc}</div>
-            </button>
-          ))}
-        </div>
-      </main>
-    </div>
-  );
-}
 
 /* ============================ APP ============================ */
 export default function App() {
-  const [role, setRole] = useState(null);
-  const [tab, setTab] = useState("aval");
-  const [students, setStudents] = useState(() => seedStudents());
-  const [evals, setEvals] = useState(() => seedEvaluations(seedStudents()));
-  const loaded = useRef(false);
+  if (!supabaseConfigured) return <div className="sn-root"><style>{CSS}</style><ConfigMissing /></div>;
+  return <AppConnected />;
+}
 
+const SAVE_LABEL = {
+  saved: { t: "Desat", c: "#9fd8cc" },
+  pending: { t: "Desant…", c: "#cfe3df" },
+  saving: { t: "Desant…", c: "#cfe3df" },
+  retrying: { t: "Sense connexió, reintentant…", c: "#f6c544" },
+  error: { t: "No s'ha pogut desar", c: "#f6a37d" },
+};
+
+function AppConnected() {
+  const [boot, setBoot] = useState({ checking: true, session: null });
+  const [me, setMe] = useState(null);
+  const [ready, setReady] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
+  const [tab, setTab] = useState("aval");
+  const [profiles, setProfiles] = useState([]);
+  const [, setGroupsVer] = useState(0);
+  const [students, _setStudents] = useState([]);
+  const [evals, _setEvals] = useState({});
+  const studentsRef = useRef([]);
+  const evalsRef = useRef({});
+  const syncRef = useRef(null);
+  const lastLoad = useRef(0);
+  const [saveStatus, setSaveStatus] = useState({ state: "saved", pending: 0, error: "" });
+  const [showPw, setShowPw] = useState(false);
+
+  // Sessió
   useEffect(() => {
-    (async () => {
-      const s = await storeGet("sn_students"); const e = await storeGet("sn_evals");
-      if (s) setStudents(s); if (e) setEvals(e); loaded.current = true;
-    })();
+    supabase.auth.getSession().then(({ data }) => setBoot({ checking: false, session: data.session }));
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT" || !session) { setBoot({ checking: false, session: null }); setMe(null); setReady(false); return; }
+      setBoot({ checking: false, session });
+    });
+    return () => sub.subscription.unsubscribe();
   }, []);
-  useEffect(() => { if (loaded.current) storeSet("sn_students", students); }, [students]);
-  useEffect(() => { if (loaded.current) storeSet("sn_evals", evals); }, [evals]);
+  const uid = boot.session?.user?.id || null;
+
+  // Setters que, a més d'actualitzar l'estat, desen els canvis a Supabase
+  const setStudents = useCallback((upd) => {
+    const prev = studentsRef.current; const next = typeof upd === "function" ? upd(prev) : upd;
+    if (next === prev) return;
+    studentsRef.current = next; _setStudents(next);
+    syncRef.current && syncRef.current.studentsChanged(prev, next);
+  }, []);
+  const setEvals = useCallback((upd) => {
+    const prev = evalsRef.current; const next = typeof upd === "function" ? upd(prev) : upd;
+    if (next === prev) return;
+    evalsRef.current = next; _setEvals(next);
+    syncRef.current && syncRef.current.evalsChanged(prev, next);
+  }, []);
+
+  const loadData = useCallback(async (profile) => {
+    const isCoord = profile.rol !== "monitor";
+    const d = await fetchAll(isCoord);
+    GROUPS.splice(0, GROUPS.length, ...d.groups);
+    const names = isCoord ? d.profiles.filter((p) => p.rol === "monitor" && p.actiu).map((p) => p.nom) : [profile.nom];
+    MONITORS.splice(0, MONITORS.length, ...names.sort((a, b) => a.localeCompare(b)));
+    studentsRef.current = d.students; _setStudents(d.students);
+    evalsRef.current = d.evals; _setEvals(d.evals);
+    setProfiles(d.profiles); setGroupsVer((v) => v + 1);
+    lastLoad.current = Date.now();
+  }, []);
+
+  // En iniciar sessió: perfil + dades
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoadErr(""); setReady(false);
+        const p = await fetchMyProfile(uid);
+        if (cancelled) return;
+        if (!p) { setLoadErr("Aquest compte no té perfil a AquaCurs. Demana-ho a coordinació."); return; }
+        if (!p.actiu) { setLoadErr("Aquest compte està desactivat."); return; }
+        syncRef.current = createSync({
+          isCoord: p.rol !== "monitor",
+          onStatus: setSaveStatus,
+          onStudentIdAssigned: (tmp, real) => {
+            const ns = studentsRef.current.map((s) => (s.id === tmp ? { ...s, id: real } : s));
+            studentsRef.current = ns; _setStudents(ns);
+            const ek = evalKey(tmp);
+            if (evalsRef.current[ek]) { const { [ek]: e, ...rest } = evalsRef.current; const ne = { ...rest, [evalKey(real)]: e }; evalsRef.current = ne; _setEvals(ne); }
+          },
+        });
+        await loadData(p);
+        if (cancelled) return;
+        setMe(p); setTab(ROLES[p.rol].defaultTab); setReady(true);
+      } catch (e) { if (!cancelled) setLoadErr(e.message || "No s'han pogut carregar les dades."); }
+    })();
+    return () => { cancelled = true; };
+  }, [uid, loadData]);
+
+  // Quan es torna a l'app, es recarrega (si no hi ha res pendent de desar) per a veure els canvis dels altres
+  useEffect(() => {
+    if (!ready || !me) return;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoad.current < 20000) return;
+      if (syncRef.current && syncRef.current.pendingCount() > 0) return;
+      loadData(me).catch(() => {});
+    };
+    document.addEventListener("visibilitychange", refresh); window.addEventListener("focus", refresh);
+    return () => { document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
+  }, [ready, me, loadData]);
+
+  // Avís si es tanca la pestanya amb canvis sense desar
+  useEffect(() => {
+    const h = (e) => { if (syncRef.current && syncRef.current.pendingCount() > 0) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", h); return () => window.removeEventListener("beforeunload", h);
+  }, []);
+
+  const logout = async () => {
+    try { if (syncRef.current && syncRef.current.pendingCount() > 0) await syncRef.current.flushNow(); } catch {}
+    syncRef.current = null;
+    await signOut();
+    studentsRef.current = []; _setStudents([]); evalsRef.current = {}; _setEvals({});
+    setMe(null); setReady(false);
+  };
 
   const ALL_TABS = [
     { id: "segu", label: "Seguiment", icon: Users },
@@ -611,13 +692,36 @@ export default function App() {
     { id: "taul", label: "Tauler", icon: BarChart3 },
     { id: "ruti", label: "Rutines gimnàs", icon: Dumbbell },
     { id: "dades", label: "Dades", icon: Database },
+    { id: "usu", label: "Usuaris", icon: KeyRound },
   ];
 
-  if (!role) return <RoleSelect onPick={(r) => { setRole(r); setTab(ROLES[r].defaultTab); }} />;
+  if (boot.checking) return <div className="sn-root" style={{ minHeight: "100vh" }}><style>{CSS}</style></div>;
+  if (!uid) return <div className="sn-root"><style>{CSS}</style><Login onLoggedIn={(session) => setBoot({ checking: false, session })} /></div>;
+  if (!ready || !me) return (
+    <div className="sn-root" style={{ minHeight: "100vh" }}>
+      <style>{CSS}</style>
+      <main style={{ maxWidth: 520, margin: "0 auto", padding: "60px 20px", textAlign: "center" }}>
+        <img src="/icon-192.png" alt="" style={{ width: 64, height: 64, borderRadius: 16, margin: "0 auto 16px" }} />
+        {loadErr ? (
+          <>
+            <div style={{ color: "var(--coral)", marginBottom: 14 }}>{loadErr}</div>
+            <div className="flex gap-2 justify-center">
+              <button className="sn-btn sn-btn-ghost" onClick={() => window.location.reload()}>Tornar a provar</button>
+              <button className="sn-btn sn-btn-dark" onClick={logout}>Eixir</button>
+            </div>
+          </>
+        ) : <div style={{ color: "var(--muted)" }}><Loader2 size={16} className="animate-spin" style={{ display: "inline", marginRight: 6 }} />Carregant les dades…</div>}
+      </main>
+    </div>
+  );
 
+  const role = me.rol;
   const allowed = ROLES[role].tabs;
   const TABS = ALL_TABS.filter((t) => allowed.includes(t.id));
   const activeTab = allowed.includes(tab) ? tab : TABS[0].id;
+  const sl = SAVE_LABEL[saveStatus.state] || SAVE_LABEL.saved;
+  const reloadAll = () => loadData(me);
+  const onGroupSaved = (g) => { const i = GROUPS.findIndex((x) => x.id === g.id); if (i >= 0) GROUPS[i] = g; else GROUPS.push(g); setGroupsVer((v) => v + 1); };
 
   return (
     <div className="sn-root" style={{ minHeight: "100vh" }}>
@@ -630,12 +734,15 @@ export default function App() {
             <img src="/icon-192.png" alt="AquaCurs" style={{ width: 40, height: 40, borderRadius: 11, display: "block", flexShrink: 0 }} />
             <div>
               <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.18rem", lineHeight: 1 }}>AquaCurs</div>
-              <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>Avaluació · Diplomes · Gestió d'escola de natació</div>
+              <div style={{ fontSize: ".74rem", marginTop: 2, color: sl.c }} title={saveStatus.error || ""}>
+                {saveStatus.state === "error" ? `${sl.t}: ${saveStatus.error}` : sl.t}
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="sn-pill" style={{ background: "#ffffff1f", color: "#fff", fontSize: ".68rem" }}>{ROLES[role].label}</span>
-            <button className="sn-tab" style={{ color: "#cfe3df", padding: ".4rem .7rem" }} onClick={() => { setRole(null); setTab("aval"); }}>Canviar</button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="sn-pill" style={{ background: "#ffffff1f", color: "#fff", fontSize: ".7rem" }}><User size={12} /> {me.nom} · {ROLES[role].label}</span>
+            <button className="sn-tab" style={{ color: "#cfe3df", padding: ".4rem .6rem" }} onClick={() => setShowPw(true)} title="Canviar el meu codi"><KeyRound size={15} /> Codi</button>
+            <button className="sn-tab" style={{ color: "#cfe3df", padding: ".4rem .6rem" }} onClick={logout}><LogOut size={15} /> Eixir</button>
           </div>
         </div>
         {TABS.length > 1 && (
@@ -649,28 +756,30 @@ export default function App() {
         )}
       </header>
 
-      <main key={role} style={{ maxWidth: 1180, margin: "0 auto", padding: "22px 20px 60px" }}>
+      <main key={me.id} style={{ maxWidth: 1180, margin: "0 auto", padding: "22px 20px 60px" }}>
         {activeTab === "segu" && <Seguiment students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
-        {activeTab === "aval" && <Avaluacio role={role} students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
+        {activeTab === "aval" && <Avaluacio role={role} me={me} students={students} setStudents={setStudents} evals={evals} setEvals={setEvals} />}
         {activeTab === "taul" && <Tauler students={students} evals={evals} />}
         {activeTab === "ruti" && <Rutines />}
-        {activeTab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} />}
+        {activeTab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} onGroupSaved={onGroupSaved} />}
+        {activeTab === "usu" && <UsersPanel profiles={profiles} me={me} onChanged={reloadAll} />}
       </main>
+      {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
     </div>
   );
 }
 
 /* ============================ MÒDUL AVALUACIÓ ============================ */
-function Avaluacio({ students, setStudents, evals, setEvals, role }) {
+function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
   const isCoord = role !== "monitor";
-  const [monitor, setMonitor] = useState(null);
+  const [monitor, setMonitor] = useState(isCoord ? null : (me && me.nom) || null);
   const [groupId, setGroupId] = useState(null);
   const [studentId, setStudentId] = useState(null);
   const [showDiplomas, setShowDiplomas] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
 
   const addStudent = (data) => {
-    const id = Math.max(5000, ...students.map((s) => s.id)) + 1;
+    const id = -Date.now(); // temporal: Supabase li assigna el codi definitiu
     setStudents((prev) => [...prev, { id, ...data }]);
   };
 
@@ -718,8 +827,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
         <span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setGroupId(null); setStudentId(null); }}>Tots els grups</span>
       ) : (
         <>
-          <span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setMonitor(null); setGroupId(null); setStudentId(null); }}>Monitors</span>
-          {monitor && <><ChevronRight size={14} /><span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setGroupId(null); setStudentId(null); }}>{monitor}</span></>}
+          <span className="sn-row px-2 py-1 rounded-lg" onClick={() => { setGroupId(null); setStudentId(null); }}>Els meus grups</span>
         </>
       )}
       {group && <><ChevronRight size={14} /><span className="sn-row px-2 py-1 rounded-lg" onClick={() => setStudentId(null)}>{group.nivell} {group.hora}</span></>}
@@ -837,7 +945,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
 
   return (
     <div>{crumb}
-      <div className="grid gap-5" style={{ gridTemplateColumns: "minmax(0,1fr) 320px" }}>
+      <div className="eval-grid">
         {/* Formulari */}
         <div className="sn-card sn-shadow" style={{ background: "#fff", padding: 20 }}>
           <div className="flex items-center justify-between mb-1">
@@ -868,7 +976,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role }) {
 
         {/* Resultat */}
         <div>
-          <div className="sn-card sn-shadow" style={{ background: "#fff", padding: 18, position: "sticky", top: 16 }}>
+          <div className="sn-card sn-shadow eval-side" style={{ background: "#fff", padding: 18 }}>
             <div style={{ fontSize: ".78rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600 }}>Resultat automàtic</div>
             <div className="flex items-center gap-2" style={{ margin: "10px 0" }}>
               <div style={{ background: m.c, color: "#fff", borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }} className="sn-display">
@@ -1294,8 +1402,6 @@ const SEND_DELAY_MS = 700; // pausa entre correus (límit de velocitat de Resend
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
-  const [sendKey, setKeyState] = useState(getSendKey());
-  const [keyDraft, setKeyDraft] = useState("");
   const [resend, setResend] = useState(false);
   const [includeNotReady, setIncludeNotReady] = useState(false);
   const [confirm, setConfirm] = useState(false);
@@ -1319,7 +1425,6 @@ function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
   const [total, setTotal] = useState(0);
   const done = Object.values(status).filter((x) => x.s === "ok").length;
 
-  const saveKey = () => { const k = keyDraft.trim(); if (!k) return; setSendKey(k); setKeyState(k); setKeyDraft(""); setFatal(""); };
 
   const run = async () => {
     const queue = toSend.slice();
@@ -1334,12 +1439,13 @@ function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
         if (!offRef.current) throw new Error("No s'ha pogut preparar el diploma.");
         const pdfBase64 = await diplomaElementToPdfBase64(offRef.current);
         const rec = finalRecommendation(level, r.scores, studentAge(r.student), r.recOverride).rec;
-        await sendDiplomaEmail({ sendKey, to: r.email, studentName: r.student.nom, level, recommended: rec, season: SEASON_LABEL, pdfBase64 });
+        const accessToken = await getAccessToken();
+        await sendDiplomaEmail({ accessToken, studentId: sid > 0 ? sid : null, to: r.email, studentName: r.student.nom, level, recommended: rec, season: SEASON_LABEL, pdfBase64 });
         onSent(sid, r.email);
         setStatus((p) => ({ ...p, [sid]: { s: "ok" } }));
       } catch (err) {
         setStatus((p) => ({ ...p, [sid]: { s: "error", m: err.message } }));
-        if (err.status === 401) { setSendKey(""); setKeyState(""); setFatal("El codi d'enviament no és correcte. Torna a introduir-lo."); break; }
+        if (err.status === 401 || err.status === 403) { setFatal(err.message); break; }
         if (err.status === 429) { setFatal(`${err.message}. S'ha aturat l'enviament: torna-ho a provar més tard (els ja enviats no es repetiran).`); break; }
         if (err.status === 500) { setFatal(err.message); break; }
       }
@@ -1371,16 +1477,6 @@ function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
         <div style={{ fontSize: ".82rem", color: "var(--muted)", marginBottom: 14 }}>
           {group.nivell} · {group.dia} {group.hora} · {monitorOf(group)}. S'envien els diplomes marcats com a llestos pel monitor, en PDF, a l'email de contacte de cada alumne.
         </div>
-
-        {!sendKey && (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: ".82rem", marginBottom: 6 }}>Introdueix el <b>codi d'enviament</b> (només cal la primera vegada en aquest dispositiu):</div>
-            <div className="flex gap-2">
-              <input className="sn-input" type="password" value={keyDraft} placeholder="Codi d'enviament" onChange={(e) => setKeyDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveKey()} />
-              <button className="sn-btn sn-btn-dark" onClick={saveKey}>Desar</button>
-            </div>
-          </div>
-        )}
 
         {fatal && <div style={{ background: "#f08a5d1a", color: "var(--coral)", borderRadius: 10, padding: "10px 12px", fontSize: ".82rem", marginBottom: 12 }}>{fatal}</div>}
 
@@ -1424,11 +1520,10 @@ function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
             <button className="sn-btn sn-btn-ghost" onClick={() => setConfirm(false)}>Cancel·lar</button>
           </div>
         ) : (
-          <button className="sn-btn sn-btn-primary w-full justify-center" style={{ opacity: toSend.length && sendKey ? 1 : .5 }} disabled={!toSend.length || !sendKey} onClick={() => setConfirm(true)}>
+          <button className="sn-btn sn-btn-primary w-full justify-center" style={{ opacity: toSend.length ? 1 : .5 }} disabled={!toSend.length} onClick={() => setConfirm(true)}>
             <Send size={16} /> {toSend.length ? `Enviar ${toSend.length} correu${toSend.length === 1 ? "" : "s"}` : "No hi ha res per enviar"}
           </button>
         )}
-        {sendKey && !running && <button className="sn-btn sn-btn-ghost" style={{ fontSize: ".72rem", padding: ".3rem .5rem", marginTop: 8 }} onClick={() => { setSendKey(""); setKeyState(""); }}>Canviar el codi d'enviament</button>}
       </div>
 
       {/* Diploma renderitzat fora de pantalla, amb amplada fixa, per a fer el PDF */}
@@ -1457,7 +1552,8 @@ function Seguiment({ students, setStudents, evals, setEvals }) {
   const actions = makeDiplomaActions(evals, setEvals);
 
   const data = useMemo(() => {
-    const names = [...MONITORS, ...(GROUPS.some((g) => !g.monitor) ? [UNASSIGNED] : [])];
+    const named = [...new Set([...MONITORS, ...GROUPS.map((g) => g.monitor).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+    const names = [...named, ...(GROUPS.some((g) => !g.monitor) ? [UNASSIGNED] : [])];
     const empty = () => ({ total: 0, pendent: 0, encurs: 0, avaluat: 0, llest: 0, enviat: 0 });
     const totals = empty();
     const monitors = names.map((nom) => {
@@ -1995,14 +2091,14 @@ function Field({ label, children }) {
 }
 
 /* ============================ MÒDUL DADES ============================ */
-function Dades({ students, setStudents, setEvals }) {
+function Dades({ students, setStudents, setEvals, onGroupSaved }) {
   const [q, setQ] = useState("");
   const [msg, setMsg] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const fileRef = useRef();
 
   const addStudent = (data) => {
-    const id = Math.max(5000, ...students.map((s) => s.id)) + 1;
+    const id = -Date.now(); // temporal: Supabase li assigna el codi definitiu
     setStudents((prev) => [...prev, { id, ...data }]);
     setMsg({ t: "ok", m: `Alumne afegit: ${data.nom}.` });
   };
@@ -2059,9 +2155,7 @@ function Dades({ students, setStudents, setEvals }) {
     e.target.value = "";
   };
 
-  const reset = () => {
-    const st = seedStudents(); setStudents(st); setEvals(seedEvaluations(st)); setMsg({ t: "ok", m: "Dades de demostració restaurades." });
-  };
+
 
   return (
     <div>
@@ -2088,17 +2182,13 @@ function Dades({ students, setStudents, setEvals }) {
           <div style={{ fontSize: ".8rem", color: "var(--muted)", marginBottom: 12 }}>Alta manual, per a inscripcions d'última hora.</div>
           <button className="sn-btn sn-btn-ghost w-full justify-center" onClick={() => setShowAdd(true)}><User size={16} /> Nou alumne</button>
         </div>
-        <div className="sn-card sn-shadow" style={{ background: "#fff", padding: 18 }}>
-          <RotateCcw size={22} color="var(--coral)" style={{ marginBottom: 8 }} />
-          <div className="sn-display" style={{ fontWeight: 700, marginBottom: 3 }}>Dades demo</div>
-          <div style={{ fontSize: ".8rem", color: "var(--muted)", marginBottom: 12 }}>Restaura els alumnes i avaluacions d'exemple.</div>
-          <button className="sn-btn sn-btn-ghost w-full justify-center" onClick={reset}><RotateCcw size={16} /> Restaurar demo</button>
-        </div>
       </div>
 
       {msg && <div className="sn-card" style={{ background: msg.t === "ok" ? "var(--puja)12" : "var(--coral)12", border: `1px solid ${msg.t === "ok" ? "var(--puja)55" : "var(--coral)55"}`, color: msg.t === "ok" ? "#0a6e5c" : "var(--coral)", padding: "10px 14px", marginBottom: 16, fontSize: ".88rem", display: "flex", gap: 8, alignItems: "center" }}>{msg.t === "ok" ? <Check size={16} /> : <AlertTriangle size={16} />}{msg.m}</div>}
 
       {showAdd && <AddStudentModal onAdd={addStudent} onClose={() => setShowAdd(false)} />}
+
+      <GroupsPanel groups={GROUPS} monitorNames={MONITORS} onSaved={onGroupSaved} />
 
       <div className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden" }}>
         <div style={{ padding: 14, borderBottom: "1px solid var(--line)" }} className="flex items-center justify-between gap-3 flex-wrap">

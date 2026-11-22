@@ -58,21 +58,16 @@ export function pdfFilename(studentName) {
   return `Diploma_${clean || "alumne"}.pdf`;
 }
 
-/* ---------- Codi d'enviament (es guarda només en aquest dispositiu) ---------- */
-const KEY_STORE = "aquacurs:sendKey";
-export function getSendKey() { try { return localStorage.getItem(KEY_STORE) || ""; } catch { return ""; } }
-export function setSendKey(v) { try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch {} }
-
 export const EMAIL_RE = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 
 /** Envia un diploma. Llança un Error amb `.status` si alguna cosa falla. */
-export async function sendDiplomaEmail({ sendKey, to, studentName, level, recommended, season, pdfBase64 }) {
+export async function sendDiplomaEmail({ accessToken, studentId, to, studentName, level, recommended, season, pdfBase64 }) {
   let res;
   try {
     res = await fetch("/api/send-diploma", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-send-key": sendKey },
-      body: JSON.stringify({ to, studentName, level, recommended, season, pdfBase64, filename: pdfFilename(studentName) }),
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ to, studentId, studentName, level, recommended, season, pdfBase64, filename: pdfFilename(studentName) }),
     });
   } catch {
     const e = new Error("Sense connexió amb el servidor."); e.status = 0; throw e;
