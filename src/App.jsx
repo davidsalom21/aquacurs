@@ -11,7 +11,7 @@ import {
 import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON,
   saveExtra, deleteExtra, fetchEspera, addEspera, deleteEspera,
   fetchLlistaGrup, fetchSessions, fetchAssistencia, validarAssistencia } from "./db.js";
-import { hasSession, comesOn, isoOf, todayIso, FESTA_CLOENDA } from "./calendari.js";
+import { hasSession, comesOn, isoOf, todayIso, FESTA_CLOENDA, estatInstalacio } from "./calendari.js";
 import { Login, ConfigMissing, ChangePasswordModal, UsersPanel, GroupsPanel } from "./auth.jsx";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -2720,9 +2720,10 @@ function Calendari({ me, isCoord }) {
               const past = iso <= today;
               const sel = iso === day;
               const color = !gs.length ? "transparent" : done === gs.length ? "var(--puja)" : past ? "var(--coral)" : "#b8c9c6";
+              const ei = estatInstalacio(iso);
               return (
-                <button key={iso} onClick={() => setDay(iso)} style={{ border: sel ? "2px solid var(--deep)" : "1px solid var(--line)", borderRadius: 10, padding: "6px 0 5px", background: iso === today ? "#12B0A014" : "#fff", cursor: "pointer", opacity: gs.length ? 1 : .45 }}>
-                  <div style={{ fontSize: ".86rem", fontWeight: 600, color: "var(--deep)" }}>{+iso.slice(8)}</div>
+                <button key={iso} onClick={() => setDay(iso)} title={ei ? ei.label : undefined} style={{ border: sel ? "2px solid var(--deep)" : `1px solid ${ei ? ei.c + "66" : "var(--line)"}`, borderRadius: 10, padding: "6px 0 5px", background: ei ? ei.c + (ei.k === "tancat" ? "33" : "22") : iso === today ? "#12B0A014" : "#fff", cursor: "pointer", opacity: gs.length || ei ? 1 : .45 }}>
+                  <div style={{ fontSize: ".86rem", fontWeight: 600, color: ei && ei.k === "tancat" ? "#b2412a" : "var(--deep)" }}>{+iso.slice(8)}</div>
                   <div style={{ height: 6, display: "flex", justifyContent: "center", marginTop: 2 }}>{gs.length > 0 && <span style={{ width: 6, height: 6, borderRadius: 6, background: color }} />}</div>
                 </button>
               );
@@ -2733,12 +2734,18 @@ function Calendari({ me, isCoord }) {
             <span><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 7, background: "var(--coral)" }} /> pendent</span>
             <span><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 7, background: "#b8c9c6" }} /> classe pròxima</span>
           </div>
+          <div className="flex gap-3 flex-wrap" style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: 6 }}>
+            <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: "#E2674A33", border: "1px solid #E2674A66" }} /> tancat (festiu)</span>
+            <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: "#2E9E4F22", border: "1px solid #2E9E4F66" }} /> obert fins a les 14:00</span>
+            <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 3, background: "#3B7DD822", border: "1px solid #3B7DD866" }} /> obert fins a les 20:00</span>
+          </div>
         </div>
 
         <div className="recep-detail">
           <div className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden" }}>
             <div style={{ padding: "10px 14px", background: "var(--surface)", fontWeight: 700, fontSize: ".9rem" }}>{fmtLlarg(day)}{day === FESTA_CLOENDA ? " · festa de cloenda" : ""}</div>
-            {dayGroups.length === 0 && <div style={{ padding: 16, color: "var(--muted)", fontSize: ".86rem" }}>{groupsOnDay(day).length ? "Hui no tens cap grup." : "No hi ha classe aquest dia."}</div>}
+            {estatInstalacio(day) && <div style={{ padding: "8px 14px", fontSize: ".82rem", fontWeight: 600, color: estatInstalacio(day).c, background: estatInstalacio(day).c + "14", borderTop: "1px solid var(--line)" }}>{estatInstalacio(day).label}</div>}
+            {dayGroups.length === 0 && <div style={{ padding: 16, color: "var(--muted)", fontSize: ".86rem" }}>{groupsOnDay(day).length ? "Aquest dia no tens cap grup." : "No hi ha cursos de natació aquest dia."}</div>}
             {dayGroups.map((g) => {
               const st = statusOf(g, day);
               return (
