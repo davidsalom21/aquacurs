@@ -76,6 +76,10 @@ const CSS = `
 `;
 
 /* ============================ DADES / CONFIG ============================ */
+// Notes trimestrals: no es mostra cap nivell recomanat (ni PUJA/MANTÉ/REFORÇ) fins a l'últim trimestre.
+// Per a tornar-ho a activar al final de curs, posa-ho a true.
+export const SHOW_RECOMMENDATION = false;
+
 const CFG = { ESCALA_MIN: 1, ESCALA_MAX: 4, NOTA_MIN: 3, PCT_PUJA: 0.75, PCT_MANTE: 0.5 };
 
 // Nivells ordenats (progressió) — clau canònica
@@ -448,14 +452,15 @@ function autoComment(level, scores) {
   const r = computeResult(level, scores);
   const strong = [...new Set(ev.filter((it) => scores[it.id] >= 4).map((it) => themeOfItem(it.d)).filter(Boolean))].slice(0, 2);
   const weak = [...new Set(ev.filter((it) => scores[it.id] < 3).map((it) => themeOfItem(it.d)).filter(Boolean))].slice(0, 2);
+  const periode = SHOW_RECOMMENDATION ? "el curs" : "el trimestre";
   let open;
-  if (r.result === "PUJA") open = "Ha tingut una progressió molt bona al llarg del curs";
-  else if (r.result === "REFORÇ") open = "Ha anat avançant durant el curs, tot i que encara necessita temps per a afermar alguns aspectes";
+  if (r.result === "PUJA") open = `Ha tingut una progressió molt bona al llarg d${SHOW_RECOMMENDATION ? "el curs" : "el trimestre"}`;
+  else if (r.result === "REFORÇ") open = `Ha anat avançant durant ${periode}, tot i que encara necessita temps per a afermar alguns aspectes`;
   else open = "Ha treballat amb constància i ha consolidat molts dels objectius del nivell";
   const s1 = strong.length ? `${open}, destacant especialment en ${joinList(strong)}.` : `${open}.`;
   let s2;
-  if (weak.length) s2 = `De cara a la pròxima temporada, convindria seguir reforçant ${joinList(weak)}.`;
-  else if (r.result === "PUJA") s2 = "Té una bona base per a afrontar nous reptes el curs vinent.";
+  if (weak.length) s2 = `${SHOW_RECOMMENDATION ? "De cara a la pròxima temporada" : "De cara al pròxim trimestre"}, convindria seguir reforçant ${joinList(weak)}.`;
+  else if (r.result === "PUJA") s2 = SHOW_RECOMMENDATION ? "Té una bona base per a afrontar nous reptes el curs vinent." : "Té una bona base per a continuar avançant.";
   else s2 = "Amb una mica més de pràctica, assolirà els objectius pendents.";
   return (s1 + " " + s2).trim();
 }
@@ -919,8 +924,8 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
               <div className="flex items-center gap-3">
                 {s.baixa && <BaixaPill />}
                 {isAtLeast(studentStatus(s, evals), "llest") && <StatusPill st={studentStatus(s, evals)} />}
-                {af.agePromoted && <span className="sn-pill" style={{ background: "var(--sun)1c", color: "#8a5a10" }} title="Promociona per edat"><AlertTriangle size={11} /> edat</span>}
-                <span className="sn-pill" style={{ background: m.c + "1a", color: m.c }}><m.icon size={12} /> {af.result}</span>
+                {SHOW_RECOMMENDATION && af.agePromoted && <span className="sn-pill" style={{ background: "var(--sun)1c", color: "#8a5a10" }} title="Promociona per edat"><AlertTriangle size={11} /> edat</span>}
+                {SHOW_RECOMMENDATION && <span className="sn-pill" style={{ background: m.c + "1a", color: m.c }}><m.icon size={12} /> {af.result}</span>}
                 <ChevronRight size={18} color="var(--muted)" />
               </div>
             </div>
@@ -978,24 +983,25 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
         {/* Resultat */}
         <div>
           <div className="sn-card sn-shadow eval-side" style={{ background: "#fff", padding: 18 }}>
-            <div style={{ fontSize: ".78rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600 }}>Resultat automàtic</div>
-            <div className="flex items-center gap-2" style={{ margin: "10px 0" }}>
+            <div style={{ fontSize: ".78rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600 }}>{SHOW_RECOMMENDATION ? "Resultat automàtic" : "Resum de l'avaluació"}</div>
+            {SHOW_RECOMMENDATION && <div className="flex items-center gap-2" style={{ margin: "10px 0" }}>
               <div style={{ background: m.c, color: "#fff", borderRadius: 12, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }} className="sn-display">
                 <m.icon size={20} /><span style={{ fontWeight: 800 }}>{m.label}</span>
               </div>
-            </div>
+            </div>}
             <div className="grid grid-cols-2 gap-2" style={{ margin: "14px 0" }}>
               <Metric label="Mitjana" value={r.avg ? r.avg.toFixed(1) : "—"} sub="/ 4" />
               <Metric label="Ítems superats" value={Math.round(r.pct * 100) + "%"} sub={`${r.evaluated}/${r.total}`} />
             </div>
-            {r.blockerFail && (
+            {SHOW_RECOMMENDATION && r.blockerFail && (
               <div style={{ background: "var(--coral)15", color: "var(--coral)", borderRadius: 10, padding: "9px 11px", fontSize: ".8rem", display: "flex", gap: 7, marginBottom: 12 }}>
                 <AlertTriangle size={16} className="shrink-0" /> Ha fallat un ítem bloquejant: no pot pujar tot i tenir bona mitjana.
               </div>
             )}
+            {SHOW_RECOMMENDATION && (
             <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginBottom: 14 }}>
               <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
-                <div style={{ fontSize: ".76rem", color: "var(--muted)" }}>Nivell recomanat 26-27</div>
+                <div style={{ fontSize: ".76rem", color: "var(--muted)" }}>Nivell recomanat</div>
                 <span className="sn-pill" style={{ fontSize: ".6rem", background: override ? "var(--aqua)22" : "var(--surface)", color: override ? "var(--deep)" : "var(--muted)" }}>{override ? "Manual" : "Automàtic"}</span>
               </div>
               {autoFinal.agePromoted && (
@@ -1019,6 +1025,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
                 </button>
               )}
             </div>
+            )}
             <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginBottom: 14 }}>
               <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
                 <div style={{ fontSize: ".76rem", color: "var(--muted)" }}>Observacions (al diploma)</div>
@@ -1201,7 +1208,8 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
         })}
       </div>
 
-      {/* Valoració + nivell recomanat */}
+      {/* Valoració + nivell recomanat (només quan toca recomanar nivell) */}
+      {SHOW_RECOMMENDATION ? (<>
       <div className="flex items-center justify-between gap-3" style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #e2d6ba" }}>
         <div>
           <div style={{ fontSize: ".66rem", color: "#8a8472" }}>Mitjana {r.avg ? r.avg.toFixed(1) : "—"}/4 · Valoració global</div>
@@ -1212,6 +1220,9 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
         <div style={{ fontSize: ".64rem", letterSpacing: ".14em", textTransform: "uppercase", opacity: .8 }}>Nivell recomanat</div>
         <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.2rem", marginTop: 2 }}>{rec}</div>
       </div>
+      </>) : (
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #e2d6ba", fontSize: ".72rem", color: "#8a8472" }}>Mitjana {r.avg ? r.avg.toFixed(1) : "—"}/4</div>
+      )}
     </div>
   );
 }
@@ -1443,7 +1454,7 @@ function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
         const pdfBase64 = await diplomaElementToPdfBase64(offRef.current);
         const rec = finalRecommendation(level, r.scores, studentAge(r.student), r.recOverride).rec;
         const accessToken = await getAccessToken();
-        await sendDiplomaEmail({ accessToken, studentId: sid > 0 ? sid : null, to: r.email, studentName: r.student.nom, level, recommended: rec, season: SEASON_LABEL, pdfBase64 });
+        await sendDiplomaEmail({ accessToken, studentId: sid > 0 ? sid : null, to: r.email, studentName: r.student.nom, level, recommended: SHOW_RECOMMENDATION ? rec : "", season: SEASON_LABEL, pdfBase64 });
         onSent(sid, r.email);
         setStatus((p) => ({ ...p, [sid]: { s: "ok" } }));
       } catch (err) {
@@ -1755,17 +1766,18 @@ function Tauler({ students, evals }) {
   return (
     <div>
       <h2 className="sn-display" style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: 4 }}>Tauler del coordinador</h2>
-      <p style={{ color: "var(--muted)", marginBottom: 18 }}>Visió global de l'escola, temporada {SEASON} — comparada amb {PREV_SEASON.label}.</p>
+      <p style={{ color: "var(--muted)", marginBottom: 18 }}>Visió global de l'escola, temporada {SEASON}{SHOW_RECOMMENDATION ? ` — comparada amb ${PREV_SEASON.label}` : ""}.</p>
 
       <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
         <KPI label="Alumnes" value={data.total} icon={Users} />
         <KPI label="Avaluats" value={`${data.avaluats}`} sub={`${data.total - data.avaluats} pendents`} icon={ClipboardList} />
-        <KPI label="Pugen de nivell" value={`${pctPuja}%`} sub={`${data.totals.PUJA} alumnes`} icon={ArrowUpRight} c="var(--puja)" />
-        <KPI label="Promocions per edat" value={data.agePromos} sub="passen sense assolir-ho" icon={AlertTriangle} c="var(--sun)" />
+        {SHOW_RECOMMENDATION && <KPI label="Pugen de nivell" value={`${pctPuja}%`} sub={`${data.totals.PUJA} alumnes`} icon={ArrowUpRight} c="var(--puja)" />}
+        {SHOW_RECOMMENDATION && <KPI label="Promocions per edat" value={data.agePromos} sub="passen sense assolir-ho" icon={AlertTriangle} c="var(--sun)" />}
         <KPI label="Mitjana global" value={data.avgGlobal ? data.avgGlobal.toFixed(2) : "—"} sub="/ 4" icon={BarChart3} />
       </div>
 
       <div className="grid gap-4" style={{ gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)" }}>
+        {SHOW_RECOMMENDATION && (<>
         <Panel title="Resultats per nivell">
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={levelChart} margin={{ left: -18, top: 6 }}>
@@ -1806,6 +1818,7 @@ function Tauler({ students, evals }) {
             </BarChart>
           </ResponsiveContainer>
         </Panel>
+        </>)}
         <Panel title="Estat de les avaluacions" full>
           <div style={{ fontSize: ".82rem", color: "var(--muted)", marginBottom: 12 }}>Progrés d'avaluació per monitor/a. Els que tenen alumnes pendents apareixen primer.</div>
           <div className="flex flex-col gap-3">
@@ -1826,6 +1839,7 @@ function Tauler({ students, evals }) {
             })}
           </div>
         </Panel>
+        {SHOW_RECOMMENDATION && (
         <Panel title={`Planificació temporada ${NEXT_SEASON}`} full>
           <div style={{ fontSize: ".82rem", color: "var(--muted)", marginBottom: 12 }}>Segons les recomanacions actuals, alumnes que estaran a cada nivell el curs vinent i grups orientatius que farien falta.</div>
           <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
@@ -1844,6 +1858,7 @@ function Tauler({ students, evals }) {
             })}
           </div>
         </Panel>
+        )}
       </div>
     </div>
   );
