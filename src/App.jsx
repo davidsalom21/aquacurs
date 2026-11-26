@@ -61,6 +61,9 @@ const CSS = `
 .eval-grid{display:grid;gap:20px;grid-template-columns:minmax(0,1fr) 320px;align-items:start}
 .eval-side{position:sticky;top:16px}
 @media (max-width:760px){.eval-grid{grid-template-columns:minmax(0,1fr)}.eval-side{position:static}}
+/* Anvers il·lustrat: proporció del dibuix i sense marges ni marc propi */
+.dip.dip-aigua{aspect-ratio:1774/887;padding:0;background:#fdfbf3;border:none}
+.dip.dip-aigua:before{display:none}
 /* RECEPCIÓ: llista de grups + detall; en mòbil el detall va primer */
 .recep-grid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);align-items:start}
 .recep-grid.single{grid-template-columns:minmax(0,1fr)}
@@ -1244,8 +1247,87 @@ function FrameDecor({ c }) {
   );
 }
 
-// ---- ANVERS: bonic, visual, amb el nom de l'alumne ----
-function DiplomaFront({ student, level, group, comment }) {
+// Disseny de l'anvers: "aigua" (fons il·lustrat amb nadadors) o "classic" (el primer disseny)
+const DIPLOMA_ANVERS = "aigua";
+
+// ---- ANVERS "aigua": fons il·lustrat (public/diploma-anvers.jpg, 1774×887) amb el text i els logos reals a sobre ----
+// Es dibuixa en un <canvas> (a doble resolució) perquè es veja exactament igual en pantalla, impresa i en el PDF.
+const AIGUA_W = 1774, AIGUA_H = 887, AIGUA_SCALE = 2;
+const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+function wrapLines(ctx, text, maxW) {
+  const words = text.split(/\s+/); const lines = []; let cur = "";
+  for (const w of words) { const t = cur ? cur + " " + w : w; if (ctx.measureText(t).width > maxW && cur) { lines.push(cur); cur = w; } else cur = t; }
+  if (cur) lines.push(cur);
+  return lines;
+}
+function spacedText(ctx, text, cx, y, spacing) {
+  // Text centrat amb espai entre lletres (sense dependre de ctx.letterSpacing)
+  const chars = [...text]; const widths = chars.map((c) => ctx.measureText(c).width);
+  const total = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
+  let x = cx - total / 2; const prev = ctx.textAlign; ctx.textAlign = "left";
+  chars.forEach((c, i) => { ctx.fillText(c, x, y); x += widths[i] + spacing; });
+  ctx.textAlign = prev;
+}
+async function drawAigua(canvas, { nom, cognoms, level, txt, monitor }) {
+  try { await Promise.all(["600 84px Fraunces", "700 84px Fraunces", "500 38px Outfit", "400 26px Inter", "600 64px Caveat"].map((f) => document.fonts.load(f))); } catch {}
+  const [bg, lp, la] = await Promise.all([loadImg("/diploma-anvers.jpg"), loadImg(LOGO_PISCINA), loadImg(LOGO_AJUNTAMENT)]);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(AIGUA_SCALE, 0, 0, AIGUA_SCALE, 0, 0);
+  ctx.clearRect(0, 0, AIGUA_W, AIGUA_H);
+  ctx.drawImage(bg, 0, 0, AIGUA_W, AIGUA_H);
+  // Logos: piscina | ajuntament
+  const lpH = 132, lpW = lp.width * lpH / lp.height, laH = 78, laW = la.width * laH / la.height, gap = 34;
+  const total = lpW + gap + 3 + gap + laW; let x = (AIGUA_W - total) / 2;
+  ctx.drawImage(lp, x, 26, lpW, lpH); x += lpW + gap;
+  ctx.fillStyle = "#0B3F7A"; ctx.globalAlpha = .75; ctx.fillRect(x, 26 + (lpH - 90) / 2, 3, 90); ctx.globalAlpha = 1; x += 3 + gap;
+  ctx.drawImage(la, x, 26 + (lpH - laH) / 2, laW, laH);
+  const cx = AIGUA_W / 2; const navy = "#0B3F7A";
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = navy; ctx.font = "500 38px Outfit, sans-serif"; spacedText(ctx, "DIPLOMA D'APROFITAMENT", cx, 212, 11.5);
+  ctx.fillStyle = "#1f5c9e"; ctx.font = "400 30px Outfit, sans-serif"; ctx.fillText("atorgat a", cx, 252);
+  ctx.fillStyle = navy; ctx.font = "700 84px Fraunces, Georgia, serif"; ctx.fillText(nom, cx, 344, 820);
+  let y = 344;
+  if (cognoms) { ctx.font = "600 50px Fraunces, Georgia, serif"; ctx.fillText(cognoms, cx, 400, 820); y = 400; }
+  // Nivell en una píndola
+  ctx.font = "600 28px Fraunces, Georgia, serif";
+  const pw = ctx.measureText(level).width + 88, ph = 44, py = y + 18;
+  ctx.fillStyle = "#D6EBFB"; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx - pw / 2, py, pw, ph, 22) : ctx.rect(cx - pw / 2, py, pw, ph); ctx.fill();
+  ctx.fillStyle = "#174f8a"; ctx.fillText(level, cx, py + 31);
+  // Observacions (fins a 4 línies; si és molt llarg, lletra més menuda)
+  let size = 27, lines;
+  for (;;) { ctx.font = `400 ${size}px Inter, sans-serif`; lines = wrapLines(ctx, txt, 760); if (lines.length <= 4 || size <= 19) break; size -= 1.5; }
+  const lh = size * 1.36, top = py + ph + 22, blockH = 128;
+  const startY = top + (blockH - lines.length * lh) / 2 + size * 0.95;
+  ctx.fillStyle = "#173a5e"; lines.forEach((l, i) => ctx.fillText(l, cx, startY + i * lh));
+  // Signatura del monitor
+  if (monitor) { ctx.fillStyle = navy; ctx.font = "600 64px Caveat, cursive"; ctx.fillText(monitor, cx, 690, 360); }
+  ctx.fillStyle = "#173a5e"; ctx.font = "400 22px Inter, sans-serif"; ctx.fillText("El monitor/a", cx, 724);
+  canvas.dataset.ready = "1";
+}
+function DiplomaFrontAigua({ student, group, level, comment }) {
+  const ref = useRef(null);
+  const parts = student.nom.trim().split(/\s+/);
+  const nom = parts[0], cognoms = parts.slice(1).join(" ");
+  const txt = comment || "per la seua participació i progressió durant la temporada 2026-2027.";
+  const monitor = group.monitor || "";
+  useEffect(() => {
+    const c = ref.current; if (!c) return;
+    c.dataset.ready = "";
+    drawAigua(c, { nom, cognoms, level, txt, monitor }).catch(() => { c.dataset.ready = "1"; });
+  }, [nom, cognoms, level, txt, monitor]);
+  return (
+    <div className="dip dip-aigua">
+      <canvas ref={ref} width={AIGUA_W * AIGUA_SCALE} height={AIGUA_H * AIGUA_SCALE} style={{ width: "100%", height: "100%", display: "block" }} />
+    </div>
+  );
+}
+
+// ---- ANVERS clàssic ----
+function DiplomaFront(props) {
+  if (DIPLOMA_ANVERS === "aigua") return <DiplomaFrontAigua {...props} />;
+  return <DiplomaFrontClassic {...props} />;
+}
+function DiplomaFrontClassic({ student, level, group, comment }) {
   const parts = student.nom.trim().split(/\s+/);
   const nom = parts[0];
   const cognoms = parts.slice(1).join(" ");

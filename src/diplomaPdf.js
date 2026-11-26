@@ -22,6 +22,12 @@ export async function waitForPaint() {
 export async function diplomaElementToPdfBase64(root) {
   const faces = Array.from(root.querySelectorAll(".dip"));
   if (faces.length === 0) throw new Error("No s'ha trobat el diploma per a generar el PDF.");
+  // L'anvers il·lustrat es dibuixa en un canvas: s'espera que estiga acabat (màx. 8 s)
+  for (let t = 0; t < 80; t++) {
+    const pending = Array.from(root.querySelectorAll(".dip-aigua canvas")).some((c) => c.dataset.ready !== "1");
+    if (!pending) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
 
   const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape", compress: true });
   const usableW = PAGE_W - MARGIN * 2;
