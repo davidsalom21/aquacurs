@@ -8,7 +8,8 @@ import {
 import {
   waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, EMAIL_RE
 } from "./diplomaPdf.js";
-import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON } from "./db.js";
+import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON,
+  saveExtra, deleteExtra, fetchEspera, addEspera, deleteEspera } from "./db.js";
 import { Login, ConfigMissing, ChangePasswordModal, UsersPanel, GroupsPanel } from "./auth.jsx";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -58,6 +59,10 @@ const CSS = `
 .eval-grid{display:grid;gap:20px;grid-template-columns:minmax(0,1fr) 320px;align-items:start}
 .eval-side{position:sticky;top:16px}
 @media (max-width:760px){.eval-grid{grid-template-columns:minmax(0,1fr)}.eval-side{position:static}}
+/* RECEPCIÓ: llista de grups + detall; en mòbil el detall va primer */
+.recep-grid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);align-items:start}
+.recep-grid.single{grid-template-columns:minmax(0,1fr)}
+@media (max-width:760px){.recep-grid{grid-template-columns:minmax(0,1fr)}.recep-detail{order:-1}}
 /* DIPLOMA */
 /* Format apaïsat (A4 horitzontal): la proporció 297:210 es manté i, si el contingut no cap, la cara creix */
 .dip{background:var(--paper);color:#23303a;border-radius:14px;padding:30px 40px;position:relative;overflow:hidden;border:1px solid #e7dcc2;aspect-ratio:297/210;width:100%}
@@ -590,8 +595,8 @@ async function storeSet(k, v) { try { localStorage.setItem("aquacurs:" + k, JSON
 /* ============================ ROLS ============================ */
 const ROLES = {
   monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["aval"], defaultTab: "aval" },
-  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "taul", "dades", "usu"], defaultTab: "segu" },
-  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
+  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "recep", "taul", "dades", "usu"], defaultTab: "segu" },
+  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "recep", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
   recepcio: { label: "Recepció", icon: Users, desc: "Inscriu alumnes, canvia'ls de grup i gestiona la llista d'espera.", tabs: ["recep"], defaultTab: "recep" },
 };
 
@@ -728,6 +733,7 @@ function AppConnected() {
     { id: "ruti", label: "Rutines gimnàs", icon: Dumbbell },
     { id: "dades", label: "Dades", icon: Database },
     { id: "usu", label: "Usuaris", icon: KeyRound },
+    { id: "recep", label: "Recepció", icon: Users },
   ];
 
   if (boot.checking) return <div className="sn-root" style={{ minHeight: "100vh" }}><style>{CSS}</style></div>;
@@ -798,6 +804,7 @@ function AppConnected() {
         {activeTab === "ruti" && <Rutines />}
         {activeTab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} onGroupSaved={onGroupSaved} />}
         {activeTab === "usu" && <UsersPanel profiles={profiles} me={me} onChanged={reloadAll} />}
+        {activeTab === "recep" && <Recepcio students={students} setStudents={setStudents} me={me} isCoord={isCoordRole(role)} bump={() => setGroupsVer((v) => v + 1)} />}
       </main>
       {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
     </div>
@@ -915,7 +922,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
             <button key={g.id} className="sn-card sn-shadow sn-row" style={{ padding: 16, textAlign: "left", background: "#fff" }} onClick={() => setGroupId(g.id)}>
               <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
                 <div className="sn-pill" style={{ background: "var(--surface)", color: "var(--deep)" }}>{g.nivell}</div>
-                <span style={{ fontSize: ".74rem", color: g.monitor ? "var(--muted)" : "var(--coral)", fontWeight: 600 }}>{g.codi ? g.codi + " · " : ""}{isCoord ? (groupMonitors(g).join(" i ") || UNASSIGNED) : groupMonitors(g).length > 1 ? "amb " + groupMonitors(g).filter((x) => x !== monitor).join(" i ") : ""}</span>
+                <span style={{ fontSize: ".74rem", color: g.monitor ? "var(--muted)" : "var(--coral)", fontWeight: 600 }}>{[g.codi, isCoord ? (groupMonitors(g).join(" i ") || UNASSIGNED) : groupMonitors(g).length > 1 ? "amb " + groupMonitors(g).filter((x) => x !== monitor).join(" i ") : ""].filter(Boolean).join(" · ")}</span>
               </div>
               <div className="flex items-center gap-2 text-sm" style={{ color: "var(--muted)", marginBottom: 10 }}>
                 <Clock size={14} /> {g.dia} · {g.hora}
@@ -2328,6 +2335,315 @@ function Dades({ students, setStudents, setEvals, onGroupSaved }) {
             );
           })}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ============================ RECEPCIÓ ============================ */
+// Capacitat per dia d'un grup: la del grup o, si no en té, la ràtio del nivell × nombre de monitors
+const groupCap = (g) => g.capacitat ?? (LEVEL_CAP[g.nivell] || 10) * Math.max(1, groupMonitors(g).length);
+const goesOn = (dies, d) => !dies || !dies.length || dies.includes(d);
+// Alumnes que ocupen plaça cada dia (sense comptar els que estan de baixa)
+function dayCounts(students, g) {
+  const list = studentsOfGroup(students, g.id).filter((s) => !s.baixa);
+  return (g.diesSetmana && g.diesSetmana.length ? g.diesSetmana : ["?"]).map((d) => ({
+    d, n: list.filter((s) => goesOn(s.extra ? s.extra.dies : s.dies, d)).length,
+  }));
+}
+const DAY_GROUPS = [
+  { k: "dl", t: "Dilluns i dimecres" }, { k: "dm", t: "Dimarts i dijous" }, { k: "dv", t: "Divendres" }, { k: "ds", t: "Dissabte" },
+];
+const normTxt = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+function CapBadges({ students, g, extraDies }) {
+  const cap = groupCap(g);
+  return (
+    <span className="flex gap-1 flex-wrap">
+      {dayCounts(students, g).map(({ d, n }) => {
+        const add = extraDies && goesOn(extraDies === "tots" ? null : extraDies, d) ? 1 : 0;
+        const tot = n + add; const full = tot > cap; const atCap = tot === cap;
+        return <span key={d} className="sn-pill" style={{ fontSize: ".66rem", background: full ? "#f08a5d22" : atCap ? "#f6c54433" : "var(--surface)", color: full ? "var(--coral)" : atCap ? "#8a5a10" : "var(--deep)" }}>{d.toUpperCase()} {tot}/{cap}</span>;
+      })}
+    </span>
+  );
+}
+
+function DiesSelect({ g, value, onChange }) {
+  const opts = g && g.diesSetmana && g.diesSetmana.length > 1 ? g.diesSetmana : [];
+  if (!opts.length) return null;
+  const v = value && value.length ? value[0] : "";
+  return (
+    <select className="sn-input" value={v} onChange={(e) => onChange(e.target.value ? [e.target.value] : null)}>
+      <option value="">Tots els dies ({opts.map((d) => DIA_NOM[d]).join(" i ")})</option>
+      {opts.map((d) => <option key={d} value={d}>Només {DIA_NOM[d]}</option>)}
+    </select>
+  );
+}
+
+function GroupPicker({ value, onChange, students, dies, exclude }) {
+  return (
+    <select className="sn-input" value={value || ""} onChange={(e) => onChange(e.target.value ? +e.target.value : null)}>
+      <option value="">— Tria un grup —</option>
+      {DAY_GROUPS.map(({ k, t }) => (
+        <optgroup key={k} label={t}>
+          {GROUPS.filter((g) => (g.diesSetmana || [])[0] === k && g.id !== exclude).map((g) => {
+            const cap = groupCap(g); const max = Math.max(...dayCounts(students, g).map((x) => x.n));
+            return <option key={g.id} value={g.id}>{g.hora} · {g.nivell} · {g.codi} · {groupMonitors(g).join(" i ") || "sense monitor"} ({max}/{cap})</option>;
+          })}
+        </optgroup>
+      ))}
+      {GROUPS.filter((g) => !DAY_GROUPS.some(({ k }) => (g.diesSetmana || [])[0] === k) && g.id !== exclude).map((g) => <option key={g.id} value={g.id}>{g.dia} {g.hora} · {g.nivell}</option>)}
+    </select>
+  );
+}
+
+function StudentForm({ initial, students, onSave, onCancel, title, saveLabel }) {
+  const [f, setF] = useState(() => ({ codi: "", nom: "", email: "", naixement: "", grupId: null, dies: null, observacions: "", ...initial }));
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const g = groupById(f.grupId);
+  const isNew = !initial || initial.id == null;
+  const dup = isNew && f.codi && students.find((s) => String(s.id) === String(f.codi).trim());
+  const sameName = isNew && f.nom.trim().length > 4 && students.find((s) => normTxt(s.nom) === normTxt(f.nom.trim()));
+  const emailOk = !f.email || EMAIL_RE.test(f.email.trim());
+  const full = g && dayCounts(students.filter((s) => s.id !== initial?.id), g).some(({ d, n }) => goesOn(f.dies, d) && n + 1 > groupCap(g));
+  const valid = f.nom.trim().length > 2 && g && emailOk && !dup && (!f.codi || /^\d+$/.test(String(f.codi).trim()));
+  const age = f.naixement ? ageAtSeason(f.naixement) : null;
+  return (
+    <div className="sn-card sn-shadow" style={{ background: "#fff", padding: 18, marginBottom: 16 }}>
+      <div className="sn-display" style={{ fontWeight: 700, marginBottom: 10 }}>{title}</div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))" }}>
+        <label style={{ fontSize: ".74rem", color: "var(--muted)" }}>Nom i cognoms<input className="sn-input" value={f.nom} onChange={(e) => set("nom", e.target.value)} placeholder="Nom Cognom Cognom" /></label>
+        {isNew && <label style={{ fontSize: ".74rem", color: "var(--muted)" }}>Codi d'usuari (opcional)<input className="sn-input" inputMode="numeric" value={f.codi} onChange={(e) => set("codi", e.target.value)} placeholder="El de Deporvision" /></label>}
+        <label style={{ fontSize: ".74rem", color: "var(--muted)" }}>Correu dels pares<input className="sn-input" type="email" value={f.email} onChange={(e) => set("email", e.target.value)} placeholder="correu@exemple.com" /></label>
+        <label style={{ fontSize: ".74rem", color: "var(--muted)" }}>Data de naixement<input className="sn-input" type="date" value={f.naixement || ""} onChange={(e) => set("naixement", e.target.value)} /></label>
+      </div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", marginTop: 8 }}>
+        <label style={{ fontSize: ".74rem", color: "var(--muted)" }}>Grup<GroupPicker value={f.grupId} onChange={(v) => setF((p) => ({ ...p, grupId: v, dies: null }))} students={students} /></label>
+        {g && g.diesSetmana && g.diesSetmana.length > 1 && <label style={{ fontSize: ".74rem", color: "var(--muted)" }}>Dies<DiesSelect g={g} value={f.dies} onChange={(v) => set("dies", v)} /></label>}
+      </div>
+      <label style={{ display: "block", fontSize: ".74rem", color: "var(--muted)", marginTop: 8 }}>Observacions (internes)<input className="sn-input" value={f.observacions} onChange={(e) => set("observacions", e.target.value)} placeholder="Opcional" /></label>
+      {g && <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 8 }}>Places ocupades: <CapBadges students={students.filter((s) => s.id !== initial?.id)} g={g} /></div>}
+      {age != null && g && <div style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 4 }}>{age} anys a l'1 d'octubre.</div>}
+      {dup && <div style={{ color: "var(--coral)", fontSize: ".8rem", marginTop: 8 }}>Ja hi ha un alumne amb el codi {f.codi}: {dup.nom} ({groupById(dup.grupId)?.codi || "sense grup"}). No es pot crear una segona fitxa.</div>}
+      {!dup && sameName && <div style={{ color: "#8a5a10", fontSize: ".8rem", marginTop: 8 }}>Compte: ja hi ha un alumne amb aquest nom ({groupById(sameName.grupId)?.codi || "sense grup"}). Comprova que no siga el mateix.</div>}
+      {!emailOk && <div style={{ color: "var(--coral)", fontSize: ".8rem", marginTop: 8 }}>El correu no té un format vàlid.</div>}
+      {full && <div style={{ color: "var(--coral)", fontSize: ".8rem", marginTop: 8 }}>El grup està ple algun dels dies triats. Pots apuntar-lo igualment o posar-lo a la llista d'espera.</div>}
+      <div className="flex gap-2 flex-wrap" style={{ marginTop: 12 }}>
+        <button className="sn-btn sn-btn-primary" disabled={!valid} style={{ opacity: valid ? 1 : .5 }} onClick={() => onSave(f, false)}><Check size={16} /> {saveLabel || "Desar"}</button>
+        {isNew && <button className="sn-btn sn-btn-ghost" disabled={f.nom.trim().length < 3} onClick={() => onSave(f, true)}>A la llista d'espera</button>}
+        <button className="sn-btn sn-btn-ghost" onClick={onCancel}>Cancel·lar</button>
+      </div>
+    </div>
+  );
+}
+
+function Recepcio({ students, setStudents, me, isCoord, bump }) {
+  const [q, setQ] = useState("");
+  const [gid, setGid] = useState(null);
+  const [form, setForm] = useState(null);          // { mode: "new" | "edit", initial }
+  const [moveFor, setMoveFor] = useState(null);    // { sid, grupId, dies }
+  const [extraFor, setExtraFor] = useState(null);  // { sid, grupId, dies }
+  const [espera, setEspera] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const who = isCoord ? me.nom : "Recepció";
+
+  useEffect(() => { fetchEspera().then(setEspera).catch(() => setEspera([])); }, []);
+  const flash = (t, m) => { setMsg({ t, m }); setTimeout(() => setMsg(null), 5000); };
+
+  const nq = normTxt(q.trim());
+  const groupsShown = !nq ? GROUPS : GROUPS.filter((g) => normTxt(g.codi).includes(nq) || normTxt(g.nivell).includes(nq) || groupMonitors(g).some((m) => normTxt(m).includes(nq)) || normTxt(g.hora).includes(nq));
+  const studentHits = nq.length >= 3 ? students.filter((s) => normTxt(s.nom).includes(nq) || String(s.id) === q.trim()).slice(0, 12) : [];
+  const g = groupById(gid);
+
+  const saveStudent = async (f, toWaitlist) => {
+    if (toWaitlist) {
+      try {
+        const row = await addEspera({ nom: f.nom.trim(), email: (f.email || "").trim(), naixement: f.naixement || null, grup_id: f.grupId || null, dies: f.dies, notes: f.observacions || "", created_by: who });
+        setEspera((p) => [...(p || []), row]); setForm(null); flash("ok", `${f.nom.trim()} afegit a la llista d'espera.`);
+      } catch (e) { flash("err", e.message); }
+      return;
+    }
+    const data = { nom: f.nom.trim(), email: (f.email || "").trim(), naixement: f.naixement || "", grupId: f.grupId, dies: f.dies && f.dies.length ? f.dies : null, observacions: (f.observacions || "").trim() };
+    if (form.mode === "edit") {
+      setStudents((prev) => prev.map((s) => (s.id === form.initial.id ? { ...s, ...data } : s)));
+      flash("ok", `Canvis desats: ${data.nom}.`);
+    } else {
+      const id = f.codi && /^\d+$/.test(String(f.codi).trim()) ? +String(f.codi).trim() : -Date.now();
+      setStudents((prev) => [...prev, { id, ...data }]);
+      if (form.fromEspera) { try { await deleteEspera(form.fromEspera); setEspera((p) => (p || []).filter((x) => x.id !== form.fromEspera)); } catch {} }
+      flash("ok", `${data.nom} inscrit a ${groupById(data.grupId)?.codi || "el grup"}.`);
+      setGid(data.grupId);
+    }
+    setForm(null);
+  };
+  const doMove = () => {
+    const { sid, grupId, dies } = moveFor; const s = students.find((x) => x.id === sid);
+    // Si el nou grup és un dels seus grups extra, aquest es lleva (ja no cal)
+    const ex = EXTRAS.find((e) => e.studentId === sid && e.grupId === grupId);
+    if (ex) { deleteExtra(sid, grupId).then(() => { EXTRAS.splice(EXTRAS.indexOf(ex), 1); bump(); }).catch((e) => flash("err", e.message)); }
+    setStudents((prev) => prev.map((x) => (x.id === sid ? { ...x, grupId, dies: dies && dies.length ? dies : null, monitorNotes: null } : x)));
+    flash("ok", `${s?.nom} canviat a ${groupById(grupId)?.codi}. L'historial guarda la data del canvi.`);
+    setMoveFor(null); setGid(grupId);
+  };
+  const doExtra = async () => {
+    const { sid, grupId, dies } = extraFor;
+    try {
+      await saveExtra({ studentId: sid, grupId, dies });
+      const i = EXTRAS.findIndex((e) => e.studentId === sid && e.grupId === grupId);
+      const row = { studentId: sid, grupId, dies: dies && dies.length ? dies : null };
+      if (i >= 0) EXTRAS[i] = row; else EXTRAS.push(row);
+      bump(); setExtraFor(null); flash("ok", "Segon grup afegit. Les notes continuen al grup principal.");
+    } catch (e) { flash("err", e.message); }
+  };
+  const removeExtra = async (sid, grupId) => {
+    try { await deleteExtra(sid, grupId); const i = EXTRAS.findIndex((e) => e.studentId === sid && e.grupId === grupId); if (i >= 0) EXTRAS.splice(i, 1); bump(); flash("ok", "Segon grup llevat."); }
+    catch (e) { flash("err", e.message); }
+  };
+  const toggleBaixa = (s) => {
+    setStudents((prev) => prev.map((x) => (x.id === s.id ? { ...x, baixa: x.baixa ? null : { at: new Date().toISOString(), per: who, motiu: "Baixa a recepció" } } : x)));
+  };
+
+  const box = { background: "#fff", padding: 16 };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+        <div>
+          <h2 className="sn-display" style={{ fontSize: "1.5rem", fontWeight: 800 }}>Recepció</h2>
+          <p style={{ color: "var(--muted)", fontSize: ".86rem" }}>Grups ordenats per dies i hores. Busca per codi de grup, nivell, monitor o nom de l'alumne.</p>
+        </div>
+        <button className="sn-btn sn-btn-dark" onClick={() => { setForm({ mode: "new", initial: { grupId: gid || null } }); window.scrollTo({ top: 0, behavior: "smooth" }); }}><User size={16} /> Nou alumne</button>
+      </div>
+      {msg && <div className="sn-card mb-3" style={{ padding: "10px 14px", fontSize: ".86rem", background: msg.t === "ok" ? "#2a9d8f14" : "#f08a5d14", color: msg.t === "ok" ? "#0a6e5c" : "var(--coral)" }}>{msg.m}</div>}
+      {form && <StudentForm key={form.mode + (form.initial?.id || "") + (form.fromEspera || "")} initial={form.initial} students={students} title={form.mode === "edit" ? `Editar ${form.initial.nom}` : "Nou alumne"} saveLabel={form.mode === "edit" ? "Desar canvis" : "Inscriure"} onSave={saveStudent} onCancel={() => setForm(null)} />}
+
+      <div className="flex items-center gap-2 mb-3" style={{ position: "relative" }}>
+        <Search size={16} style={{ position: "absolute", left: 12, color: "var(--muted)" }} />
+        <input className="sn-input" style={{ paddingLeft: 36 }} placeholder="Codi del grup (p. ex. NXTMJ03), nivell, monitor o alumne…" value={q} onChange={(e) => setQ(e.target.value)} />
+        {q && <button className="sn-btn sn-btn-ghost" style={{ padding: ".5rem .6rem" }} onClick={() => setQ("")}><X size={15} /></button>}
+      </div>
+
+      {studentHits.length > 0 && (
+        <div className="sn-card sn-shadow mb-4" style={{ background: "#fff", overflow: "hidden" }}>
+          <div style={{ padding: "8px 14px", background: "var(--surface)", fontWeight: 700, fontSize: ".82rem" }}>Alumnes</div>
+          {studentHits.map((s) => { const sg = groupById(s.grupId); return (
+            <div key={s.id} className="sn-row flex items-center justify-between gap-2 flex-wrap" style={{ padding: "9px 14px", borderTop: "1px solid var(--line)", fontSize: ".86rem" }} onClick={() => { setGid(s.grupId); setQ(""); }}>
+              <span><b>{s.nom}</b> <span style={{ color: "var(--muted)" }}>#{s.id}</span></span>
+              <span style={{ color: "var(--muted)", fontSize: ".78rem" }}>{sg ? `${sg.codi} · ${sg.dia} ${sg.hora}` : "sense grup"}{s.dies ? ` · ${diesLabel(s.dies)}` : ""}{s.baixa ? " · baixa" : ""}</span>
+            </div>
+          ); })}
+        </div>
+      )}
+
+      <div className={`recep-grid ${g ? "" : "single"}`}>
+        <div>
+          {DAY_GROUPS.map(({ k, t }) => {
+            const list = groupsShown.filter((x) => (x.diesSetmana || [])[0] === k);
+            if (!list.length) return null;
+            return (
+              <div key={k} className="sn-card sn-shadow mb-3" style={{ background: "#fff", overflow: "hidden" }}>
+                <div style={{ padding: "8px 14px", background: "var(--surface)", fontWeight: 700, fontSize: ".86rem" }}>{t}</div>
+                {list.map((x) => (
+                  <div key={x.id} className="sn-row" style={{ padding: "9px 14px", borderTop: "1px solid var(--line)", background: x.id === gid ? "var(--aqua)14" : undefined }} onClick={() => setGid(x.id)}>
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div style={{ fontSize: ".86rem" }}><b>{x.horaInici || x.hora}</b> · {x.nivell}</div>
+                      <CapBadges students={students} g={x} />
+                    </div>
+                    <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>{x.codi} · {groupMonitors(x).join(" i ") || "sense monitor"}</div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          {groupsShown.length === 0 && <div style={{ color: "var(--muted)", padding: 12 }}>Cap grup coincideix amb «{q}».</div>}
+        </div>
+
+        {g && (
+          <div className="recep-detail">
+            <div className="sn-card sn-shadow mb-3" style={box}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.1rem" }}>{g.nivell} · {g.hora}</div>
+                  <div style={{ fontSize: ".8rem", color: "var(--muted)" }}>{g.codi} · {g.dia} · {groupMonitors(g).join(" i ") || "sense monitor"}</div>
+                </div>
+                <button className="sn-btn sn-btn-ghost" style={{ padding: ".4rem .6rem" }} onClick={() => setGid(null)}><X size={15} /></button>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 8, fontSize: ".78rem", color: "var(--muted)" }}>Places: <CapBadges students={students} g={g} /> <span>(màx. {groupCap(g)} per dia)</span></div>
+              <button className="sn-btn sn-btn-primary" style={{ marginTop: 10, padding: ".5rem .9rem", fontSize: ".84rem" }} onClick={() => { setForm({ mode: "new", initial: { grupId: g.id } }); window.scrollTo({ top: 0, behavior: "smooth" }); }}><User size={15} /> Inscriure en aquest grup</button>
+            </div>
+            <div className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden" }}>
+              {studentsOfGroup(students, g.id).map((s, i) => (
+                <div key={(s.extra ? "x" : "") + s.id} style={{ padding: "10px 14px", borderTop: i ? "1px solid var(--line)" : "none", opacity: s.baixa ? .6 : 1 }}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{s.nom} <span style={{ color: "var(--muted)", fontWeight: 400, fontSize: ".76rem" }}>#{s.id > 0 ? s.id : "nou"}</span></div>
+                      <div style={{ fontSize: ".74rem", color: s.email ? "var(--muted)" : "var(--coral)" }}>{s.email || "Sense correu"}{s.naixement ? ` · ${studentAge(s)} anys` : " · sense data de naixement"}</div>
+                    </div>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {diesLabel(s.extra ? s.extra.dies : s.dies) && <span className="sn-pill" style={{ background: "#2f6f9f14", color: "#2f6f9f", fontSize: ".66rem" }}>{diesLabel(s.extra ? s.extra.dies : s.dies)}</span>}
+                      {s.extra && <span className="sn-pill" style={{ background: "var(--surface)", color: "var(--muted)", fontSize: ".66rem" }}>2n grup · principal {groupById(s.grupId)?.codi}</span>}
+                      {s.baixa && <BaixaPill />}
+                    </div>
+                  </div>
+                  {s.observacions && <div style={{ fontSize: ".74rem", color: "var(--muted)", marginTop: 2 }}>📝 {s.observacions}</div>}
+                  <div className="flex gap-1.5 flex-wrap" style={{ marginTop: 6 }}>
+                    {!s.extra && <>
+                      <button className="sn-btn sn-btn-ghost" style={{ padding: ".3rem .55rem", fontSize: ".74rem" }} onClick={() => { setForm({ mode: "edit", initial: { id: s.id, nom: s.nom, email: s.email, naixement: s.naixement, grupId: s.grupId, dies: s.dies, observacions: s.observacions || "" } }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Editar</button>
+                      <button className="sn-btn sn-btn-ghost" style={{ padding: ".3rem .55rem", fontSize: ".74rem" }} onClick={() => setMoveFor({ sid: s.id, grupId: null, dies: null })}>Canviar de grup</button>
+                      <button className="sn-btn sn-btn-ghost" style={{ padding: ".3rem .55rem", fontSize: ".74rem" }} onClick={() => setExtraFor({ sid: s.id, grupId: null, dies: null })}>Afegir 2n grup</button>
+                      <button className="sn-btn sn-btn-ghost" style={{ padding: ".3rem .55rem", fontSize: ".74rem", color: s.baixa ? "var(--deep)" : "var(--coral)" }} onClick={() => toggleBaixa(s)}>{s.baixa ? "Llevar la baixa" : "Marcar baixa"}</button>
+                    </>}
+                    {s.extra && <button className="sn-btn sn-btn-ghost" style={{ padding: ".3rem .55rem", fontSize: ".74rem" }} onClick={() => removeExtra(s.id, g.id)}>Llevar d'aquest grup</button>}
+                  </div>
+                  {moveFor && moveFor.sid === s.id && !s.extra && (
+                    <div style={{ background: "var(--surface)", borderRadius: 10, padding: 10, marginTop: 8 }}>
+                      <div style={{ fontSize: ".8rem", fontWeight: 600, marginBottom: 6 }}>Nou grup per a {s.nom.split(" ")[0]}</div>
+                      <GroupPicker value={moveFor.grupId} onChange={(v) => setMoveFor((p) => ({ ...p, grupId: v, dies: null }))} students={students} exclude={g.id} />
+                      {groupById(moveFor.grupId) && <div style={{ marginTop: 6 }}><DiesSelect g={groupById(moveFor.grupId)} value={moveFor.dies} onChange={(v) => setMoveFor((p) => ({ ...p, dies: v }))} /></div>}
+                      {groupById(moveFor.grupId) && <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 6 }}>Amb ell: <CapBadges students={students} g={groupById(moveFor.grupId)} extraDies={moveFor.dies || "tots"} /></div>}
+                      <div style={{ fontSize: ".74rem", color: "var(--muted)", marginTop: 6 }}>Les notes que ja tinga es queden a la seua fitxa.</div>
+                      <div className="flex gap-2" style={{ marginTop: 8 }}>
+                        <button className="sn-btn sn-btn-primary" style={{ padding: ".45rem .8rem", fontSize: ".8rem" }} disabled={!moveFor.grupId} onClick={doMove}>Canviar</button>
+                        <button className="sn-btn sn-btn-ghost" style={{ padding: ".45rem .8rem", fontSize: ".8rem" }} onClick={() => setMoveFor(null)}>Cancel·lar</button>
+                      </div>
+                    </div>
+                  )}
+                  {extraFor && extraFor.sid === s.id && !s.extra && (
+                    <div style={{ background: "var(--surface)", borderRadius: 10, padding: 10, marginTop: 8 }}>
+                      <div style={{ fontSize: ".8rem", fontWeight: 600, marginBottom: 6 }}>Segon grup per a {s.nom.split(" ")[0]} (sortirà a la llista, però les notes les posa el grup principal)</div>
+                      <GroupPicker value={extraFor.grupId} onChange={(v) => setExtraFor((p) => ({ ...p, grupId: v, dies: null }))} students={students} exclude={g.id} />
+                      {groupById(extraFor.grupId) && <div style={{ marginTop: 6 }}><DiesSelect g={groupById(extraFor.grupId)} value={extraFor.dies} onChange={(v) => setExtraFor((p) => ({ ...p, dies: v }))} /></div>}
+                      <div className="flex gap-2" style={{ marginTop: 8 }}>
+                        <button className="sn-btn sn-btn-primary" style={{ padding: ".45rem .8rem", fontSize: ".8rem" }} disabled={!extraFor.grupId} onClick={doExtra}>Afegir</button>
+                        <button className="sn-btn sn-btn-ghost" style={{ padding: ".45rem .8rem", fontSize: ".8rem" }} onClick={() => setExtraFor(null)}>Cancel·lar</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {studentsOfGroup(students, g.id).length === 0 && <div style={{ padding: 16, color: "var(--muted)", fontSize: ".86rem" }}>Encara no hi ha cap alumne.</div>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden", marginTop: 18 }}>
+        <div style={{ padding: "10px 14px", background: "var(--surface)", fontWeight: 700, fontSize: ".9rem" }}>Llista d'espera ({espera ? espera.length : "…"})</div>
+        {espera && espera.length === 0 && <div style={{ padding: 14, color: "var(--muted)", fontSize: ".86rem" }}>Ningú en espera. Quan un grup està ple, des del formulari de nou alumne pots posar-lo ací.</div>}
+        {(espera || []).map((w) => { const wg = groupById(w.grup_id); return (
+          <div key={w.id} className="flex items-center justify-between gap-2 flex-wrap" style={{ padding: "10px 14px", borderTop: "1px solid var(--line)", fontSize: ".86rem" }}>
+            <div>
+              <b>{w.nom}</b> <span style={{ color: "var(--muted)", fontSize: ".76rem" }}>des del {fmtDate(w.created_at)}</span>
+              <div style={{ fontSize: ".76rem", color: "var(--muted)" }}>{wg ? `${wg.codi} · ${wg.dia} ${wg.hora}` : "sense grup"}{w.dies && w.dies.length ? ` · ${diesLabel(w.dies)}` : ""}{w.email ? ` · ${w.email}` : ""}{w.notes ? ` · ${w.notes}` : ""}</div>
+              {wg && <div style={{ marginTop: 3 }}><CapBadges students={students} g={wg} /></div>}
+            </div>
+            <div className="flex gap-1.5">
+              <button className="sn-btn sn-btn-primary" style={{ padding: ".35rem .6rem", fontSize: ".76rem" }} onClick={() => { setForm({ mode: "new", fromEspera: w.id, initial: { nom: w.nom, email: w.email, naixement: w.naixement || "", grupId: w.grup_id, dies: w.dies, observacions: w.notes || "" } }); window.scrollTo({ top: 0, behavior: "smooth" }); }}>Inscriure</button>
+              <button className="sn-btn sn-btn-ghost" style={{ padding: ".35rem .5rem", color: "var(--coral)" }} title="Llevar de la llista" onClick={async () => { try { await deleteEspera(w.id); setEspera((p) => p.filter((x) => x.id !== w.id)); } catch (e) { flash("err", e.message); } }}><Trash2 size={14} /></button>
+            </div>
+          </div>
+        ); })}
       </div>
     </div>
   );
