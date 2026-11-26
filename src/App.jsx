@@ -62,9 +62,9 @@ const CSS = `
 .eval-side{position:sticky;top:16px}
 @media (max-width:760px){.eval-grid{grid-template-columns:minmax(0,1fr)}.eval-side{position:static}}
 /* Anvers il·lustrat: proporció del dibuix i sense marges ni marc propi */
-.dip.dip-aigua{aspect-ratio:297/210;padding:0;background:#fff;border:none}
+.dip.dip-aigua{aspect-ratio:297/210;padding:0;background:#FDF8EC;border:none}
 .dip.dip-aigua:before{display:none}
-.dip.dip-aigua-rev{background:#fff;border:none;padding:9.5% 7% 6.5%}
+.dip.dip-aigua-rev{background:#FDF8EC;border:none;padding:9.5% 7% 6.5%}
 .dip.dip-aigua-rev:before{display:none}
 .dip-aigua-rev > .dip-bg{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0}
 .dip-aigua-rev > :not(.dip-bg){position:relative;z-index:1}
@@ -1379,7 +1379,7 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
   const items = itemsOf(level);
   const t = themeOf(level);
   return (
-    <div className={`dip ${DIPLOMA_ANVERS === "aigua" ? "dip-aigua-rev" : ""}`} style={{ "--dipaccent": t.c, display: "flex", flexDirection: "column" }}>
+    <div className={`dip ${DIPLOMA_ANVERS === "aigua" ? "dip-aigua-rev" : ""}`} style={{ "--dipaccent": t.c, display: "flex", flexDirection: "column", justifyContent: DIPLOMA_ANVERS === "aigua" ? "center" : undefined }}>
       {DIPLOMA_ANVERS === "aigua" ? <img className="dip-bg" src="/diploma-revers.jpg" alt="" /> : <div className="dip-band" />}
       {/* Capçalera */}
       <div className="flex items-center justify-between" style={{ marginBottom: 12, marginTop: 4 }}>
@@ -1399,7 +1399,8 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
       </div>
 
       {/* Ítems amb nota */}
-      <div style={{ flex: 1, columnCount: items.length > 6 ? 2 : 1, columnGap: 24, fontSize: ".72rem" }}>
+      {/* Amb el disseny d'aigua, tot el contingut del revers queda centrat a la pàgina */}
+      <div style={{ flex: DIPLOMA_ANVERS === "aigua" ? "0 1 auto" : 1, marginTop: DIPLOMA_ANVERS === "aigua" ? 6 : 0, columnCount: items.length > 6 ? 2 : 1, columnGap: 24, fontSize: DIPLOMA_ANVERS === "aigua" ? ".76rem" : ".72rem" }}>
         {(ITEMS[level] || []).map((it, i) => {
           if (it.s) return <div key={"s" + i} className="sn-display" style={{ fontWeight: 700, fontSize: ".62rem", letterSpacing: ".08em", textTransform: "uppercase", color: t.c, margin: "9px 0 3px", breakInside: "avoid" }}>{it.s}</div>;
           const v = scores[it.id];
@@ -1425,7 +1426,7 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
         <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.2rem", marginTop: 2 }}>{rec}</div>
       </div>
       </>) : (
-        <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #e2d6ba", fontSize: ".72rem", color: "#8a8472" }}>Mitjana {r.avg ? r.avg.toFixed(1) : "—"}/4</div>
+        <div style={{ marginTop: 16, paddingTop: 12, borderTop: "1px solid #e2d6ba", fontSize: ".76rem", color: "#6f6a5c" }}>Mitjana <b style={{ color: "var(--deep)" }}>{r.avg ? r.avg.toFixed(1) : "—"}</b>/4</div>
       )}
     </div>
   );
