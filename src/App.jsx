@@ -1272,6 +1272,43 @@ function spacedText(ctx, text, cx, y, spacing) {
   chars.forEach((c, i) => { ctx.fillText(c, x, y); x += widths[i] + spacing; });
   ctx.textAlign = prev;
 }
+// Signatura: el nom en lletra manuscrita, una mica inclinat, amb un garabat propi de cada nom
+// (sempre el mateix per a la mateixa persona) que passa per baix i no tapa les lletres.
+function drawSignature(ctx, name, cx, baseY, color) {
+  let seed = [...name].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  ctx.save();
+  ctx.font = "600 92px Caveat, cursive";
+  const w = Math.min(ctx.measureText(name).width, 520);
+  const ang = (-4 + rnd() * 4) * Math.PI / 180;   // entre -4° i 0°
+  ctx.translate(cx, baseY); ctx.rotate(ang);
+  ctx.fillStyle = color; ctx.textAlign = "center"; ctx.fillText(name, 0, 0, 520);
+  // Garabat
+  ctx.strokeStyle = color; ctx.lineWidth = 3.2; ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.globalAlpha = .85;
+  const x0 = -w / 2 - 30 - rnd() * 20, x1 = w / 2 + 40 + rnd() * 30, y0 = 18 + rnd() * 8;
+  const kind = Math.floor(rnd() * 3);
+  ctx.beginPath();
+  ctx.moveTo(x0, y0 + 6);
+  if (kind === 0) {
+    // ona llarga que acaba en un llaç
+    ctx.bezierCurveTo(x0 + w * .3, y0 - 14, x0 + w * .6, y0 + 26, x1 - 40, y0 + 4);
+    ctx.bezierCurveTo(x1 + 10, y0 - 10, x1 - 6, y0 - 40, x1 - 30, y0 - 22);
+    ctx.bezierCurveTo(x1 - 50, y0 - 8, x1 - 10, y0 + 20, x1 + 30, y0 + 8);
+  } else if (kind === 1) {
+    // dues ones i un traç cap amunt
+    ctx.bezierCurveTo(x0 + w * .25, y0 + 22, x0 + w * .45, y0 - 18, x0 + w * .7, y0 + 10);
+    ctx.bezierCurveTo(x0 + w * .9, y0 + 20, x1 - 20, y0 - 6, x1, y0 - 34);
+  } else {
+    // subratllat amb tornada
+    ctx.bezierCurveTo(x0 + w * .4, y0 - 6, x1 - w * .2, y0 + 16, x1, y0);
+    ctx.bezierCurveTo(x1 + 18, y0 - 8, x1 - 20, y0 + 14, x0 + w * .55, y0 + 18);
+  }
+  ctx.stroke();
+  // punt final
+  ctx.beginPath(); ctx.arc(x1 + 14 + rnd() * 10, y0 - 26 - rnd() * 10, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+  ctx.restore();
+}
+
 async function drawAigua(canvas, { nom, cognoms, level, txt, monitor }) {
   try { await Promise.all(["600 84px Fraunces", "700 84px Fraunces", "500 38px Outfit", "400 26px Inter", "600 64px Caveat"].map((f) => document.fonts.load(f))); } catch {}
   const [bg, lp, la] = await Promise.all([loadImg("/diploma-anvers.jpg"), loadImg(LOGO_PISCINA), loadImg(LOGO_AJUNTAMENT)]);
@@ -1304,8 +1341,8 @@ async function drawAigua(canvas, { nom, cognoms, level, txt, monitor }) {
   const startY = top + (blockH - lines.length * lh) / 2 + size * 0.95;
   ctx.fillStyle = "#173a5e"; lines.forEach((l, i) => ctx.fillText(l, cx, startY + i * lh));
   // Signatura del monitor
-  if (monitor) { ctx.fillStyle = navy; ctx.font = "600 92px Caveat, cursive"; ctx.fillText(monitor, cx, 1175, 520); }
-  ctx.fillStyle = "#173a5e"; ctx.font = "400 32px Inter, sans-serif"; ctx.fillText("El monitor/a", cx, 1222);
+  if (monitor) drawSignature(ctx, monitor, cx, 1170, navy);
+  ctx.fillStyle = "#173a5e"; ctx.font = "400 32px Inter, sans-serif"; ctx.fillText("Monitor/a", cx, 1256);
   canvas.dataset.ready = "1";
 }
 function DiplomaFrontAigua({ student, group, level, comment }) {
@@ -1362,7 +1399,7 @@ function DiplomaFrontClassic({ student, level, group, comment }) {
         <div />
         <div style={{ textAlign: "center" }}>
           {group.monitor ? <Signature name={group.monitor} /> : <div style={{ width: 150, height: 34, borderBottom: "1px solid #c9bfa6" }} />}
-          <div style={{ fontSize: ".66rem", color: "#8a8472", marginTop: 2 }}>El monitor/a</div>
+          <div style={{ fontSize: ".66rem", color: "#8a8472", marginTop: 2 }}>Monitor/a</div>
         </div>
         <img src={LOGO_AJUNTAMENT} alt="Ajuntament de Carcaixent" style={{ height: 25, justifySelf: "end", opacity: .92 }} />
       </div>
