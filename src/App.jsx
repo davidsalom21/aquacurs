@@ -521,6 +521,20 @@ function ageAtSeason(birth) {
   if (m < 0 || (m === 0 && SEASON_START.getDate() < b.getDate())) a--;
   return a;
 }
+// Edat exacta (anys i mesos) a l'inici de temporada, per a veure de seguida si falta poc per a complir
+function ageYM(birth) {
+  const b = parseDate(birth); if (!b) return null;
+  let months = (SEASON_START.getFullYear() - b.getFullYear()) * 12 + (SEASON_START.getMonth() - b.getMonth());
+  if (SEASON_START.getDate() < b.getDate()) months--;
+  if (months < 0) return { y: 0, m: 0 };
+  return { y: Math.floor(months / 12), m: months % 12 };
+}
+function ageLabel(birth) {
+  const a = ageYM(birth); if (!a) return "";
+  const yy = a.y === 1 ? "1 any" : `${a.y} anys`;
+  return a.m ? `${yy} i ${a.m} ${a.m === 1 ? "mes" : "mesos"}` : yy;
+}
+const studentAgeLabel = (s) => (s && s.naixement ? ageLabel(s.naixement) : `${studentAge(s)} anys`);
 function studentAge(s) { const a = ageAtSeason(s && s.naixement); return a != null ? a : (+(s && s.edat) || 0); }
 function birthMonth(s) { const b = parseDate(s && s.naixement); return b ? b.getMonth() + 1 : null; }
 const MONTHS_CA = ["", "gener", "febrer", "març", "abril", "maig", "juny", "juliol", "agost", "setembre", "octubre", "novembre", "desembre"];
@@ -982,7 +996,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: "var(--surface)", display: "grid", placeItems: "center", fontSize: ".8rem", fontWeight: 700, color: "var(--muted)" }}>{s.nom.split(" ")[0][0]}</div>
                 <div>
                   <div style={{ fontWeight: 600 }}>{s.nom}</div>
-                  <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>#{s.id} · {studentAge(s)} anys</div>
+                  <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>#{s.id} · {studentAgeLabel(s)} a l'1/10</div>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">{tags}</div>
@@ -994,7 +1008,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: "var(--surface)", display: "grid", placeItems: "center", fontSize: ".8rem", fontWeight: 700, color: "var(--deep)" }}>{s.nom.split(" ")[0][0]}</div>
                 <div>
                   <div style={{ fontWeight: 600 }}>{s.nom}</div>
-                  <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>#{s.id} · {studentAge(s)} anys · {r.evaluated}/{r.total} ítems</div>
+                  <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>#{s.id} · {studentAgeLabel(s)} a l'1/10 · {r.evaluated}/{r.total} ítems</div>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -1381,7 +1395,7 @@ function AddStudentModal({ onClose, onAdd, fixedGroupId }) {
         </div>
         {age != null && (
           <div style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: -4, marginBottom: 10 }}>
-            Edat a l'octubre: <b style={{ color: "var(--deep)" }}>{age} anys</b>{(birthMonth({ naixement }) === 11 || birthMonth({ naixement }) === 12) ? ` · compleix al ${MONTHS_CA[birthMonth({ naixement })]} (cas límit)` : ""}
+            Edat a l'1 d'octubre: <b style={{ color: "var(--deep)" }}>{ageLabel(naixement)}</b>{(birthMonth({ naixement }) === 11 || birthMonth({ naixement }) === 12) ? ` · compleix al ${MONTHS_CA[birthMonth({ naixement })]} (cas límit)` : ""}
           </div>
         )}
 
@@ -2430,7 +2444,7 @@ function StudentForm({ initial, students, onSave, onCancel, title, saveLabel }) 
       </div>
       <label style={{ display: "block", fontSize: ".74rem", color: "var(--muted)", marginTop: 8 }}>Observacions (internes)<input className="sn-input" value={f.observacions} onChange={(e) => set("observacions", e.target.value)} placeholder="Opcional" /></label>
       {g && <div className="flex items-center gap-2 flex-wrap" style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 8 }}>Places ocupades: <CapBadges students={students.filter((s) => s.id !== initial?.id)} g={g} /></div>}
-      {age != null && g && <div style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 4 }}>{age} anys a l'1 d'octubre.</div>}
+      {age != null && <div style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 4 }}>Edat a l'1 d'octubre (inici dels cursos): <b style={{ color: "var(--deep)" }}>{ageLabel(f.naixement)}</b></div>}
       {dup && <div style={{ color: "var(--coral)", fontSize: ".8rem", marginTop: 8 }}>Ja hi ha un alumne amb el codi {f.codi}: {dup.nom} ({groupById(dup.grupId)?.codi || "sense grup"}). No es pot crear una segona fitxa.</div>}
       {!dup && sameName && <div style={{ color: "#8a5a10", fontSize: ".8rem", marginTop: 8 }}>Compte: ja hi ha un alumne amb aquest nom ({groupById(sameName.grupId)?.codi || "sense grup"}). Comprova que no siga el mateix.</div>}
       {!emailOk && <div style={{ color: "var(--coral)", fontSize: ".8rem", marginTop: 8 }}>El correu no té un format vàlid.</div>}
@@ -2584,7 +2598,7 @@ function Recepcio({ students, setStudents, me, isCoord, bump }) {
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div>
                       <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{s.nom} <span style={{ color: "var(--muted)", fontWeight: 400, fontSize: ".76rem" }}>#{s.id > 0 ? s.id : "nou"}</span></div>
-                      <div style={{ fontSize: ".74rem", color: s.email ? "var(--muted)" : "var(--coral)" }}>{s.email || "Sense correu"}{s.naixement ? ` · ${studentAge(s)} anys` : " · sense data de naixement"}</div>
+                      <div style={{ fontSize: ".74rem", color: s.email ? "var(--muted)" : "var(--coral)" }}>{s.email || "Sense correu"}{s.naixement ? ` · ${studentAgeLabel(s)} a l'1/10` : " · sense data de naixement"}</div>
                     </div>
                     <div className="flex items-center gap-1 flex-wrap">
                       {diesLabel(s.extra ? s.extra.dies : s.dies) && <span className="sn-pill" style={{ background: "#2f6f9f14", color: "#2f6f9f", fontSize: ".66rem" }}>{diesLabel(s.extra ? s.extra.dies : s.dies)}</span>}
