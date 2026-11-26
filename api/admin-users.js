@@ -7,7 +7,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { adminClient, getCaller, isCoordRole, loginFor } from "../lib/supa.js";
 
-const ROLES = ["monitor", "coord_nat", "coord_gen"];
+const ROLES = ["monitor", "coord_nat", "coord_gen", "recepcio"];
 const clean = (s, n = 60) => String(s ?? "").trim().replace(/\s+/g, " ").slice(0, n);
 function sameKey(a, b) {
   const x = Buffer.from(String(a || "")), y = Buffer.from(String(b || ""));
@@ -43,7 +43,7 @@ export default async function handler(req, res) {
     if (!sameKey(b.setupKey, setupKey)) return res.status(401).json({ error: "El codi de configuració no és correcte." });
     const { count } = await admin.from("profiles").select("id", { count: "exact", head: true }).in("rol", ["coord_nat", "coord_gen"]);
     if (count > 0) return res.status(409).json({ error: "Ja hi ha comptes de coordinació. Entra amb un d'ells." });
-    const r = await createAccount(admin, clean(b.nom), ROLES.includes(b.rol) && b.rol !== "monitor" ? b.rol : "coord_nat", b.password);
+    const r = await createAccount(admin, clean(b.nom), (b.rol === "coord_nat" || b.rol === "coord_gen") ? b.rol : "coord_nat", b.password);
     return res.status(r.status).json(r.data || { error: r.error });
   }
 

@@ -229,6 +229,32 @@ const GROUPS = [
 ];
 const groupName = (g) => `${g.nivell} · ${g.dia} ${g.hora}`;
 const groupById = (id) => GROUPS.find((g) => g.id === id);
+// Alumnes que van a un segon grup (només llista i assistència; les notes, al grup principal)
+const EXTRAS = [];
+const isCoordRole = (rol) => rol === "coord_nat" || rol === "coord_gen";
+const groupMonitors = (g) => (g ? (g.monitors && g.monitors.length ? g.monitors : (g.monitor ? [g.monitor] : [])) : []);
+const isMonitorOf = (g, nom) => !!nom && groupMonitors(g).includes(nom);
+// Qui posa les notes a un alumne: el seu monitor de notes o, si no en té, el monitor principal del grup
+const notesMonitorOf = (s) => (s && s.monitorNotes) || groupById(s && s.grupId)?.monitor || "";
+const canGradeStudent = (s, nom, isCoord) => {
+  if (isCoord) return true;
+  const g = groupById(s && s.grupId);
+  if (!isMonitorOf(g, nom)) return false;
+  return !s.monitorNotes || s.monitorNotes === nom;
+};
+const DIA_NOM = { dl: "dilluns", dm: "dimarts", dx: "dimecres", dj: "dijous", dv: "divendres", ds: "dissabte" };
+const diesLabel = (dies) => (dies && dies.length ? "Només " + dies.map((d) => DIA_NOM[d] || d).join(" i ") : "");
+const DAY_ORDER = { dl: 0, dm: 1, dx: 2, dj: 3, dv: 4, ds: 5 };
+const minutesOf = (h) => { const m = String(h || "").match(/(\d{1,2})[:.](\d{2})/); return m ? +m[1] * 60 + +m[2] : 9999; };
+const groupSortKey = (g) => (DAY_ORDER[(g.diesSetmana || [])[0]] ?? 9) * 10000 + minutesOf(g.horaInici || g.hora);
+const sortGroups = (list) => [...list].sort((a, b) => groupSortKey(a) - groupSortKey(b) || String(a.nivell).localeCompare(String(b.nivell)));
+// Alumnes d'un grup: els del grup principal + els que hi van com a segon grup (marcats amb extra)
+function studentsOfGroup(students, gid) {
+  const main = students.filter((s) => s.grupId === gid);
+  const byId = new Map(students.map((s) => [s.id, s]));
+  const extra = EXTRAS.filter((e) => e.grupId === gid).map((e) => byId.get(e.studentId) && { ...byId.get(e.studentId), extra: { grupId: gid, dies: e.dies } }).filter(Boolean);
+  return [...main, ...extra].sort((a, b) => a.nom.localeCompare(b.nom));
+}
 
 // Monitors: es carreguen de Supabase (comptes amb rol de monitor)
 const MONITORS = [];
@@ -566,6 +592,7 @@ const ROLES = {
   monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["aval"], defaultTab: "aval" },
   coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "taul", "dades", "usu"], defaultTab: "segu" },
   coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
+  recepcio: { label: "Recepció", icon: Users, desc: "Inscriu alumnes, canvia'ls de grup i gestiona la llista d'espera.", tabs: ["recep"], defaultTab: "recep" },
 };
 
 /* ============================ APP ============================ */
@@ -625,10 +652,12 @@ function AppConnected() {
   }, []);
 
   const loadData = useCallback(async (profile) => {
-    const isCoord = profile.rol !== "monitor";
-    const d = await fetchAll(isCoord);
-    GROUPS.splice(0, GROUPS.length, ...d.groups);
-    const names = isCoord ? d.profiles.filter((p) => p.rol === "monitor" && p.actiu).map((p) => p.nom) : [profile.nom];
+    const isCoord = isCoordRole(profile.rol);
+    const d = await fetchAll(profile.rol);
+    GROUPS.splice(0, GROUPS.length, ...sortGroups(d.groups));
+    EXTRAS.splice(0, EXTRAS.length, ...d.extras);
+    const names = isCoord ? d.profiles.filter((p) => p.rol === "monitor" && p.actiu).map((p) => p.nom)
+      : profile.rol === "recepcio" ? [...new Set(d.groups.flatMap(groupMonitors))] : [profile.nom];
     MONITORS.splice(0, MONITORS.length, ...names.sort((a, b) => a.localeCompare(b)));
     studentsRef.current = d.students; _setStudents(d.students);
     evalsRef.current = d.evals; _setEvals(d.evals);
@@ -648,7 +677,7 @@ function AppConnected() {
         if (!p) { setLoadErr("Aquest compte no té perfil a AquaCurs. Demana-ho a coordinació."); return; }
         if (!p.actiu) { setLoadErr("Aquest compte està desactivat."); return; }
         syncRef.current = createSync({
-          isCoord: p.rol !== "monitor",
+          canManage: isCoordRole(p.rol) || p.rol === "recepcio",
           onStatus: setSaveStatus,
           onStudentIdAssigned: (tmp, real) => {
             const ns = studentsRef.current.map((s) => (s.id === tmp ? { ...s, id: real } : s));
@@ -777,7 +806,7 @@ function AppConnected() {
 
 /* ============================ MÒDUL AVALUACIÓ ============================ */
 function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
-  const isCoord = role !== "monitor";
+  const isCoord = isCoordRole(role);
   const [monitor, setMonitor] = useState(isCoord ? null : (me && me.nom) || null);
   const [groupId, setGroupId] = useState(null);
   const [studentId, setStudentId] = useState(null);
@@ -790,14 +819,18 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
   };
 
   const monitors = MONITORS;
-  const myGroups = useMemo(() => isCoord ? GROUPS : GROUPS.filter((g) => g.monitor === monitor), [isCoord, monitor]);
+  const myGroups = useMemo(() => isCoord ? GROUPS : GROUPS.filter((g) => isMonitorOf(g, monitor)), [isCoord, monitor]);
   const group = groupById(groupId);
-  const groupStudents = useMemo(() => students.filter((s) => s.grupId === groupId), [students, groupId]);
+  const groupStudents = useMemo(() => studentsOfGroup(students, groupId), [students, groupId]);
+  // Alumnes als quals aquest usuari posa les notes en aquest grup (per als diplomes)
+  const gradableStudents = useMemo(() => groupStudents.filter((s) => !s.extra && canGradeStudent(s, monitor, isCoord)), [groupStudents, monitor, isCoord]);
   const student = students.find((s) => s.id === studentId);
+  const canGrade = !!student && canGradeStudent(student, monitor, isCoord);
+  const setNotesMonitor = (sid, nom) => setStudents((prev) => prev.map((s) => (s.id === sid ? { ...s, monitorNotes: nom } : s)));
 
   const setScore = (sid, itemId, val) => {
     const key = `${SEASON}:${sid}`;
-    const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
+    const gm = notesMonitorOf(students.find((s) => s.id === sid)) || monitor;
     setEvals((prev) => {
       const cur = prev[key]?.scores || {};
       const next = { ...cur, [itemId]: val };
@@ -808,7 +841,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
   const overrideFor = (sid) => evals[`${SEASON}:${sid}`]?.override || null;
   const setOverride = (sid, lvl) => {
     const key = `${SEASON}:${sid}`;
-    const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
+    const gm = notesMonitorOf(students.find((s) => s.id === sid)) || monitor;
     setEvals((prev) => {
       const cur = prev[key] || { scores: {}, monitor: gm };
       return { ...prev, [key]: { ...cur, override: lvl } };
@@ -818,7 +851,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
   const diplomaActions = makeDiplomaActions(evals, setEvals);
   const setComment = (sid, val) => {
     const key = `${SEASON}:${sid}`;
-    const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
+    const gm = notesMonitorOf(students.find((s) => s.id === sid)) || monitor;
     setEvals((prev) => {
       const cur = prev[key] || { scores: {}, monitor: gm };
       if (val === null) { const { comment, ...rest } = cur; return { ...prev, [key]: rest }; }
@@ -848,7 +881,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
       <p style={{ color: "var(--muted)", marginBottom: 18 }}>Selecciona el teu nom per veure els teus grups.</p>
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))" }}>
         {monitors.map((m) => {
-          const gc = GROUPS.filter((g) => g.monitor === m).length;
+          const gc = GROUPS.filter((g) => isMonitorOf(g, m)).length;
           const gLabel = gc === 0 ? "Encara sense grups" : `${gc} grup${gc === 1 ? "" : "s"}`;
           return (
             <button key={m} className="sn-card sn-shadow sn-row" style={{ padding: 18, textAlign: "left", background: "#fff" }} onClick={() => setMonitor(m)}>
@@ -874,20 +907,22 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
       <h2 className="sn-display" style={{ fontSize: "1.4rem", fontWeight: 800, marginBottom: 14 }}>{isCoord ? "Tots els grups" : "Els teus grups"}</h2>
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))" }}>
         {myGroups.map((g) => {
-          const sc = students.filter((s) => s.grupId === g.id).length;
-          const done = students.filter((s) => s.grupId === g.id && isAtLeast(studentStatus(s, evals), "avaluat")).length;
+          const all = studentsOfGroup(students, g.id);
+          const mine = all.filter((s) => !s.extra && canGradeStudent(s, isCoord ? null : monitor, isCoord));
+          const sc = mine.length;
+          const done = mine.filter((s) => isAtLeast(studentStatus(s, evals), "avaluat")).length;
           return (
             <button key={g.id} className="sn-card sn-shadow sn-row" style={{ padding: 16, textAlign: "left", background: "#fff" }} onClick={() => setGroupId(g.id)}>
               <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
                 <div className="sn-pill" style={{ background: "var(--surface)", color: "var(--deep)" }}>{g.nivell}</div>
-                {isCoord && <span style={{ fontSize: ".74rem", color: g.monitor ? "var(--muted)" : "var(--coral)", fontWeight: 600 }}>{monitorOf(g)}</span>}
+                <span style={{ fontSize: ".74rem", color: g.monitor ? "var(--muted)" : "var(--coral)", fontWeight: 600 }}>{g.codi ? g.codi + " · " : ""}{isCoord ? (groupMonitors(g).join(" i ") || UNASSIGNED) : groupMonitors(g).length > 1 ? "amb " + groupMonitors(g).filter((x) => x !== monitor).join(" i ") : ""}</span>
               </div>
               <div className="flex items-center gap-2 text-sm" style={{ color: "var(--muted)", marginBottom: 10 }}>
                 <Clock size={14} /> {g.dia} · {g.hora}
               </div>
               <div className="lane" style={{ marginBottom: 10 }} />
               <div className="flex items-center justify-between text-sm">
-                <span style={{ color: "var(--muted)" }}>{sc} alumnes</span>
+                <span style={{ color: "var(--muted)" }}>{all.length} alumnes{sc !== all.length ? ` · notes a ${sc}` : ""}</span>
                 <span style={{ fontWeight: 600, color: done === sc ? "var(--puja)" : "var(--muted)" }}>{done}/{sc} avaluats</span>
               </div>
             </button>
@@ -901,10 +936,13 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
   if (!studentId || !student) return (
     <div>{crumb}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
-        <h2 className="sn-display" style={{ fontSize: "1.4rem", fontWeight: 800 }}>{group.nivell} · {group.hora}</h2>
+        <div>
+          <h2 className="sn-display" style={{ fontSize: "1.4rem", fontWeight: 800 }}>{group.nivell} · {group.hora}</h2>
+          <div style={{ fontSize: ".8rem", color: "var(--muted)" }}>{group.codi ? group.codi + " · " : ""}{group.dia} · {groupMonitors(group).join(" i ") || UNASSIGNED}</div>
+        </div>
         <div className="flex gap-2">
           <button className="sn-btn sn-btn-ghost" onClick={() => setShowAdd(true)}><User size={16} /> Afegir alumne</button>
-          <button className="sn-btn sn-btn-dark" onClick={() => setShowDiplomas(true)}><Award size={17} /> Generar diplomes del grup</button>
+          <button className="sn-btn sn-btn-dark" disabled={!gradableStudents.length} style={{ opacity: gradableStudents.length ? 1 : .5 }} onClick={() => setShowDiplomas(true)}><Award size={17} /> Generar diplomes del grup</button>
         </div>
       </div>
       <div className="sn-card sn-shadow" style={{ overflow: "hidden", background: "#fff" }}>
@@ -912,8 +950,33 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
           const r = computeResult(group.nivell, scoresFor(s.id));
           const af = finalRecommendation(group.nivell, scoresFor(s.id), studentAge(s), overrideFor(s.id));
           const m = RESULT_META[af.result];
+          const dl = diesLabel(s.extra ? s.extra.dies : s.dies);
+          const nm = notesMonitorOf(s);
+          const shared = !s.extra && groupMonitors(group).length > 1;
+          const notesHere = !s.extra && canGradeStudent(s, isCoord ? null : monitor, isCoord);
+          const tags = (
+            <>
+              {dl && <span className="sn-pill" style={{ background: "#2f6f9f14", color: "#2f6f9f", fontSize: ".66rem" }}><Calendar size={11} /> {dl}</span>}
+              {s.extra && <span className="sn-pill" style={{ background: "var(--surface)", color: "var(--muted)", fontSize: ".66rem" }} title="Ve també a un altre grup, on li posen les notes">Notes en un altre grup ({groupById(s.grupId)?.codi || groupById(s.grupId)?.nivell || "—"})</span>}
+              {shared && !s.monitorNotes && <span className="sn-pill" style={{ background: "var(--sun)1c", color: "#8a5a10", fontSize: ".66rem" }}>Sense monitor de notes</span>}
+              {shared && s.monitorNotes && <span className="sn-pill" style={{ background: "var(--surface)", color: s.monitorNotes === monitor ? "var(--deep)" : "var(--muted)", fontSize: ".66rem" }}>Notes: {s.monitorNotes === monitor ? "tu" : s.monitorNotes}</span>}
+              {!shared && !s.extra && !isCoord && !notesHere && <span className="sn-pill" style={{ background: "var(--surface)", color: "var(--muted)", fontSize: ".66rem" }}>Notes: {nm}</span>}
+            </>
+          );
+          if (s.extra) return (
+            <div key={"x" + s.id} className="flex items-center justify-between flex-wrap gap-2" style={{ padding: "13px 16px", borderTop: i ? "1px solid var(--line)" : "none", opacity: .8 }}>
+              <div className="flex items-center gap-3">
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: "var(--surface)", display: "grid", placeItems: "center", fontSize: ".8rem", fontWeight: 700, color: "var(--muted)" }}>{s.nom.split(" ")[0][0]}</div>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{s.nom}</div>
+                  <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>#{s.id} · {studentAge(s)} anys</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">{tags}</div>
+            </div>
+          );
           return (
-            <div key={s.id} className="sn-row flex items-center justify-between" style={{ padding: "13px 16px", borderTop: i ? "1px solid var(--line)" : "none" }} onClick={() => setStudentId(s.id)}>
+            <div key={s.id} className="sn-row flex items-center justify-between flex-wrap gap-2" style={{ padding: "13px 16px", borderTop: i ? "1px solid var(--line)" : "none" }} onClick={() => setStudentId(s.id)}>
               <div className="flex items-center gap-3">
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: "var(--surface)", display: "grid", placeItems: "center", fontSize: ".8rem", fontWeight: 700, color: "var(--deep)" }}>{s.nom.split(" ")[0][0]}</div>
                 <div>
@@ -921,7 +984,8 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
                   <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>#{s.id} · {studentAge(s)} anys · {r.evaluated}/{r.total} ítems</div>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                {tags}
                 {s.baixa && <BaixaPill />}
                 {isAtLeast(studentStatus(s, evals), "llest") && <StatusPill st={studentStatus(s, evals)} />}
                 {SHOW_RECOMMENDATION && af.agePromoted && <span className="sn-pill" style={{ background: "var(--sun)1c", color: "#8a5a10" }} title="Promociona per edat"><AlertTriangle size={11} /> edat</span>}
@@ -932,7 +996,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
           );
         })}
       </div>
-      {showDiplomas && <DiplomaModal students={groupStudents} level={group.nivell} group={group} scoresFor={scoresFor} overrideFor={overrideFor} commentFor={commentFor} canSend={isCoord} actions={diplomaActions} onClose={() => setShowDiplomas(false)} />}
+      {showDiplomas && <DiplomaModal students={gradableStudents} level={group.nivell} group={group} scoresFor={scoresFor} overrideFor={overrideFor} commentFor={commentFor} canSend={isCoord} actions={diplomaActions} onClose={() => setShowDiplomas(false)} />}
       {showAdd && <AddStudentModal fixedGroupId={groupId} onAdd={addStudent} onClose={() => setShowAdd(false)} />}
     </div>
   );
@@ -946,8 +1010,12 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
   const m = RESULT_META[eff.result];
   const manualComment = commentFor(studentId);
   const effComment = manualComment != null ? manualComment : autoComment(group.nivell, scores);
-  const idx = groupStudents.findIndex((s) => s.id === studentId);
+  const navList = groupStudents.filter((s) => !s.extra);
+  const idx = navList.findIndex((s) => s.id === studentId);
   const allItems = ITEMS[group.nivell] || [];
+  const sharedGroup = groupMonitors(group).length > 1;
+  // El diploma el signa qui posa les notes
+  const dipGroup = { ...group, monitor: notesMonitorOf(student) || group.monitor };
 
   return (
     <div>{crumb}
@@ -957,22 +1025,43 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
           <div className="flex items-center justify-between mb-1">
             <h2 className="sn-display" style={{ fontSize: "1.35rem", fontWeight: 800 }}>{student.nom}</h2>
             <div className="flex gap-1.5">
-              <button className="sn-btn sn-btn-ghost" disabled={idx <= 0} style={{ opacity: idx <= 0 ? .4 : 1, padding: ".5rem .7rem" }} onClick={() => setStudentId(groupStudents[idx - 1].id)}><ChevronLeft size={16} /></button>
-              <button className="sn-btn sn-btn-ghost" disabled={idx >= groupStudents.length - 1} style={{ opacity: idx >= groupStudents.length - 1 ? .4 : 1, padding: ".5rem .7rem" }} onClick={() => setStudentId(groupStudents[idx + 1].id)}><ChevronRight size={16} /></button>
+              <button className="sn-btn sn-btn-ghost" disabled={idx <= 0} style={{ opacity: idx <= 0 ? .4 : 1, padding: ".5rem .7rem" }} onClick={() => setStudentId(navList[idx - 1].id)}><ChevronLeft size={16} /></button>
+              <button className="sn-btn sn-btn-ghost" disabled={idx >= navList.length - 1} style={{ opacity: idx >= navList.length - 1 ? .4 : 1, padding: ".5rem .7rem" }} onClick={() => setStudentId(navList[idx + 1].id)}><ChevronRight size={16} /></button>
             </div>
           </div>
-          <p style={{ color: "var(--muted)", fontSize: ".82rem", marginBottom: 16 }}>Puntua de 1 a 4. <b style={{ color: "var(--coral)" }}>●</b> = ítem bloquejant (cal ≥3 per pujar de nivell).</p>
+          {student.dies && <div className="sn-pill" style={{ background: "#2f6f9f14", color: "#2f6f9f", fontSize: ".72rem", marginBottom: 8 }}><Calendar size={12} /> {diesLabel(student.dies)}</div>}
+          {sharedGroup && (
+            <div style={{ background: "var(--surface)", borderRadius: 10, padding: "10px 12px", fontSize: ".82rem", marginBottom: 12 }}>
+              <div style={{ marginBottom: 6 }}>Grup amb {groupMonitors(group).join(" i ")}. <b>Monitor de notes:</b> {student.monitorNotes || <span style={{ color: "#8a5a10" }}>encara sense assignar</span>}</div>
+              {isCoord ? (
+                <select className="sn-input" style={{ padding: ".4rem .6rem", fontSize: ".82rem", maxWidth: 240 }} value={student.monitorNotes || ""} onChange={(e) => setNotesMonitor(student.id, e.target.value || null)}>
+                  <option value="">Sense assignar</option>
+                  {groupMonitors(group).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              ) : !student.monitorNotes ? (
+                <button className="sn-btn sn-btn-dark" style={{ padding: ".4rem .7rem", fontSize: ".8rem" }} onClick={() => setNotesMonitor(student.id, monitor)}><Check size={14} /> Li pose jo les notes</button>
+              ) : student.monitorNotes === monitor ? (
+                <button className="sn-btn sn-btn-ghost" style={{ padding: ".4rem .7rem", fontSize: ".8rem" }} onClick={() => setNotesMonitor(student.id, null)}>Deixar aquest alumne</button>
+              ) : null}
+            </div>
+          )}
+          {!canGrade && (
+            <div style={{ background: "var(--sun)1c", border: "1px solid var(--sun)66", borderRadius: 10, padding: "9px 11px", fontSize: ".82rem", color: "#8a5a10", marginBottom: 12 }}>
+              Les notes d'aquest alumne les posa <b>{notesMonitorOf(student) || "un altre monitor"}</b>. Pots veure-les, però no canviar-les.
+            </div>
+          )}
+          <p style={{ color: "var(--muted)", fontSize: ".82rem", marginBottom: 16 }}>Puntua de 1 a 4.{SHOW_RECOMMENDATION && <> <b style={{ color: "var(--coral)" }}>●</b> = ítem bloquejant (cal ≥3 per pujar de nivell).</>}</p>
 
           {allItems.map((it, i) => {
             if (it.s) return <div key={"s" + i} className="sn-display" style={{ fontWeight: 700, fontSize: ".82rem", letterSpacing: ".08em", textTransform: "uppercase", color: "var(--aqua)", margin: "18px 0 6px" }}>{it.s}</div>;
             return (
               <div key={it.id} className="flex items-center justify-between gap-3" style={{ padding: "8px 0", borderTop: i ? "1px solid var(--surface)" : "none" }}>
                 <div style={{ fontSize: ".9rem" }}>
-                  {it.b && <span style={{ color: "var(--coral)", marginRight: 5 }}>●</span>}{it.d}
+                  {SHOW_RECOMMENDATION && it.b && <span style={{ color: "var(--coral)", marginRight: 5 }}>●</span>}{it.d}
                 </div>
                 <div className="flex gap-1.5 shrink-0">
                   {[1, 2, 3, 4].map((v) => (
-                    <button key={v} className={`sn-score ${scores[it.id] === v ? "sel" : ""} ${scores[it.id] === v && v < 3 ? "fail" : ""}`} onClick={() => setScore(studentId, it.id, v)}>{v}</button>
+                    <button key={v} className={`sn-score ${scores[it.id] === v ? "sel" : ""} ${scores[it.id] === v && v < 3 ? "fail" : ""}`} disabled={!canGrade} style={canGrade ? undefined : { cursor: "default", opacity: scores[it.id] === v ? 1 : .45 }} onClick={() => canGrade && setScore(studentId, it.id, v)}>{v}</button>
                   ))}
                 </div>
               </div>
@@ -1031,14 +1120,14 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
                 <div style={{ fontSize: ".76rem", color: "var(--muted)" }}>Observacions (al diploma)</div>
                 <span className="sn-pill" style={{ fontSize: ".6rem", background: manualComment != null ? "var(--aqua)22" : "var(--surface)", color: manualComment != null ? "var(--deep)" : "var(--muted)" }}>{manualComment != null ? "Manual" : "Automàtic"}</span>
               </div>
-              <textarea className="sn-input" rows={4} style={{ fontSize: ".82rem", resize: "vertical", lineHeight: 1.4 }} value={effComment} placeholder="Es genera sol segons les notes…" disabled={Object.keys(scores).length === 0} onChange={(e) => setComment(studentId, e.target.value)} />
+              <textarea className="sn-input" rows={4} style={{ fontSize: ".82rem", resize: "vertical", lineHeight: 1.4 }} value={effComment} placeholder="Es genera sol segons les notes…" disabled={!canGrade || Object.keys(scores).length === 0} onChange={(e) => setComment(studentId, e.target.value)} />
               {manualComment != null && (
                 <button className="flex items-center gap-1" style={{ background: "none", border: "none", color: "var(--aqua)", fontSize: ".74rem", fontWeight: 600, cursor: "pointer", marginTop: 7, padding: 0 }} onClick={() => setComment(studentId, null)}>
                   <RotateCcw size={12} /> Regenerar automàtic
                 </button>
               )}
             </div>
-            <SingleDiplomaButton student={student} level={group.nivell} group={group} scores={scores} recOverride={override} comment={effComment} canSend={isCoord} actions={diplomaActions} />
+            {canGrade && <SingleDiplomaButton student={student} level={group.nivell} group={dipGroup} scores={scores} recOverride={override} comment={effComment} canSend={isCoord} actions={diplomaActions} />}
             <div style={{ borderTop: "1px solid var(--line)", paddingTop: 12, marginTop: 14 }}>
               <BaixaPanel student={student} isCoord={isCoord} monitorName={monitor || group.monitor} setStudents={setStudents}
                 onDelete={() => { const sid = studentId; setStudentId(null); deleteStudentEverywhere(setStudents, setEvals, sid); }} />
@@ -1059,7 +1148,9 @@ function Metric({ label, value, sub }) {
 }
 
 /* ============================ DIPLOMA (anvers + revers) ============================ */
-function Diploma({ student, level, group, scores, recOverride, comment }) {
+function Diploma({ student, level, group: g0, scores, recOverride, comment }) {
+  // Signa el monitor que posa les notes a l'alumne (en grups amb dos monitors)
+  const group = student && student.monitorNotes ? { ...g0, monitor: student.monitorNotes } : g0;
   return (
     <>
       <DiplomaFront student={student} level={level} group={group} comment={comment} />

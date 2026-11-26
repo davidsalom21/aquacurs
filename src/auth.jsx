@@ -2,13 +2,14 @@
    Entrada amb nom + codi, canvi de codi, gestió d'usuaris i de grups.
    ============================================================ */
 import React, { useEffect, useState } from "react";
-import { User, Users, BarChart3, ChevronLeft, Loader2, X, Check, KeyRound, Eye, EyeOff, Trash2, UserPlus, AlertTriangle, ShieldCheck } from "lucide-react";
+import { User, Users, BarChart3, ConciergeBell, ChevronLeft, Loader2, X, Check, KeyRound, Eye, EyeOff, Trash2, UserPlus, AlertTriangle, ShieldCheck } from "lucide-react";
 import { fetchLoginList, signIn, changePassword, adminUsers, saveGroup } from "./db.js";
 
 export const ROLE_INFO = {
   monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes." },
   coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies." },
   coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes." },
+  recepcio: { label: "Recepció", icon: ConciergeBell, desc: "Inscriu alumnes nous, canvia'ls de grup i gestiona la llista d'espera." },
 };
 
 function Header({ subtitle }) {
@@ -74,7 +75,7 @@ export function Login({ onLoggedIn }) {
     catch (e) { setErr(e.message); setBusy(false); }
   };
 
-  const hasCoord = (list || []).some((p) => p.rol !== "monitor");
+  const hasCoord = (list || []).some((p) => p.rol === "coord_nat" || p.rol === "coord_gen");
 
   return (
     <div className="sn-root" style={{ minHeight: "100vh" }}>
@@ -230,7 +231,7 @@ export function UsersPanel({ profiles, me, onChanged }) {
     if (ok) { setNom(""); setCode(""); }
   };
 
-  const groups = { monitor: [], coord_nat: [], coord_gen: [] };
+  const groups = { monitor: [], coord_nat: [], coord_gen: [], recepcio: [] };
   profiles.forEach((p) => (groups[p.rol] || (groups[p.rol] = [])).push(p));
 
   return (
@@ -297,9 +298,15 @@ export function UsersPanel({ profiles, me, onChanged }) {
 export function GroupsPanel({ groups, monitorNames, onSaved }) {
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(null);
-  const change = async (g, monitor) => {
+  const monsOf = (g) => (g.monitors && g.monitors.length ? g.monitors : (g.monitor ? [g.monitor] : []));
+  // monitors[0] = monitor principal (signa i posa les notes si l'alumne no en té un altre); monitors[1] = segon monitor
+  const change = async (g, idx, nom) => {
+    const cur = [...monsOf(g)];
+    cur[idx] = nom || "";
+    const monitors = [...new Set(cur.filter(Boolean))];
+    const ng = { ...g, monitors, monitor: monitors[0] || "" };
     setSaving(g.id); setMsg(null);
-    try { await saveGroup({ ...g, monitor }); onSaved({ ...g, monitor }); setMsg({ t: "ok", m: `${g.nivell} ${g.dia} ${g.hora}: ${monitor || "sense monitor"}.` }); }
+    try { await saveGroup(ng); onSaved(ng); setMsg({ t: "ok", m: `${g.codi || g.nivell} ${g.dia} ${g.hora}: ${monitors.join(" i ") || "sense monitor"}.` }); }
     catch (e) { setMsg({ t: "err", m: e.message }); }
     finally { setSaving(null); }
   };
@@ -307,25 +314,33 @@ export function GroupsPanel({ groups, monitorNames, onSaved }) {
     <div className="sn-card sn-shadow mb-5" style={{ background: "#fff", overflow: "hidden" }}>
       <div style={{ padding: 14, borderBottom: "1px solid var(--line)" }}>
         <div className="sn-display" style={{ fontWeight: 700 }}>Grups i monitors ({groups.length})</div>
-        <div style={{ fontSize: ".78rem", color: "var(--muted)", marginTop: 2 }}>Canvia el monitor d'un grup i es desa a l'instant.</div>
+        <div style={{ fontSize: ".78rem", color: "var(--muted)", marginTop: 2 }}>Canvia el monitor d'un grup i es desa a l'instant. El segon monitor és per als grups amb dos monitors a la vegada.</div>
       </div>
       {msg && <div style={{ padding: "8px 14px", fontSize: ".8rem", color: msg.t === "ok" ? "#0a6e5c" : "var(--coral)", background: msg.t === "ok" ? "#2a9d8f10" : "#f08a5d10" }}>{msg.m}</div>}
-      <div style={{ maxHeight: 360, overflow: "auto" }}>
-        {groups.map((g) => (
-          <div key={g.id} className="flex items-center justify-between gap-2" style={{ padding: "8px 14px", borderTop: "1px solid var(--surface)", fontSize: ".86rem" }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontWeight: 600 }}>{g.nivell}</div>
-              <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>#{g.id} · {g.dia} {g.hora}</div>
+      <div style={{ maxHeight: 420, overflow: "auto" }}>
+        {groups.map((g) => {
+          const ms = monsOf(g);
+          const opts = (cur) => [...new Set([...monitorNames, ...ms, ...(cur ? [cur] : [])])].sort();
+          return (
+            <div key={g.id} className="flex items-center justify-between gap-2 flex-wrap" style={{ padding: "8px 14px", borderTop: "1px solid var(--surface)", fontSize: ".86rem" }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600 }}>{g.nivell}</div>
+                <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>{g.codi || "#" + g.id} · {g.dia} {g.hora}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                {saving === g.id && <Loader2 size={14} className="animate-spin" />}
+                <select className="sn-input" style={{ width: 140, padding: ".45rem .6rem", color: ms[0] ? "var(--deep)" : "var(--coral)" }} value={ms[0] || ""} disabled={saving === g.id} onChange={(e) => change(g, 0, e.target.value)}>
+                  <option value="">Sense assignar</option>
+                  {opts(ms[0]).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <select className="sn-input" style={{ width: 140, padding: ".45rem .6rem", color: ms[1] ? "var(--deep)" : "var(--muted)" }} value={ms[1] || ""} disabled={saving === g.id || !ms[0]} onChange={(e) => change(g, 1, e.target.value)}>
+                  <option value="">— 2n monitor —</option>
+                  {opts(ms[1]).filter((m) => m !== ms[0]).map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {saving === g.id && <Loader2 size={14} className="animate-spin" />}
-              <select className="sn-input" style={{ width: 160, padding: ".45rem .6rem", color: g.monitor ? "var(--deep)" : "var(--coral)" }} value={g.monitor || ""} disabled={saving === g.id} onChange={(e) => change(g, e.target.value)}>
-                <option value="">Sense assignar</option>
-                {[...new Set([...monitorNames, ...(g.monitor ? [g.monitor] : [])])].sort().map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
