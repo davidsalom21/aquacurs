@@ -62,8 +62,12 @@ const CSS = `
 .eval-side{position:sticky;top:16px}
 @media (max-width:760px){.eval-grid{grid-template-columns:minmax(0,1fr)}.eval-side{position:static}}
 /* Anvers il·lustrat: proporció del dibuix i sense marges ni marc propi */
-.dip.dip-aigua{aspect-ratio:1774/887;padding:0;background:#fdfbf3;border:none}
+.dip.dip-aigua{aspect-ratio:297/210;padding:0;background:#fff;border:none}
 .dip.dip-aigua:before{display:none}
+.dip.dip-aigua-rev{background:#fff;border:none;padding:9.5% 7% 6.5%}
+.dip.dip-aigua-rev:before{display:none}
+.dip-aigua-rev > .dip-bg{position:absolute;inset:0;width:100%;height:100%;display:block;z-index:0}
+.dip-aigua-rev > :not(.dip-bg){position:relative;z-index:1}
 /* RECEPCIÓ: llista de grups + detall; en mòbil el detall va primer */
 .recep-grid{display:grid;gap:16px;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);align-items:start}
 .recep-grid.single{grid-template-columns:minmax(0,1fr)}
@@ -1250,9 +1254,9 @@ function FrameDecor({ c }) {
 // Disseny de l'anvers: "aigua" (fons il·lustrat amb nadadors) o "classic" (el primer disseny)
 const DIPLOMA_ANVERS = "aigua";
 
-// ---- ANVERS "aigua": fons il·lustrat (public/diploma-anvers.jpg, 1774×887) amb el text i els logos reals a sobre ----
+// ---- ANVERS "aigua": fons il·lustrat (public/diploma-anvers.jpg, 2135×1510, proporció A4) amb el text i els logos reals a sobre ----
 // Es dibuixa en un <canvas> (a doble resolució) perquè es veja exactament igual en pantalla, impresa i en el PDF.
-const AIGUA_W = 1774, AIGUA_H = 887, AIGUA_SCALE = 2;
+const AIGUA_W = 2135, AIGUA_H = 1510, AIGUA_SCALE = 1.5;  // A4 horitzontal
 const loadImg = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
 function wrapLines(ctx, text, maxW) {
   const words = text.split(/\s+/); const lines = []; let cur = "";
@@ -1276,32 +1280,32 @@ async function drawAigua(canvas, { nom, cognoms, level, txt, monitor }) {
   ctx.clearRect(0, 0, AIGUA_W, AIGUA_H);
   ctx.drawImage(bg, 0, 0, AIGUA_W, AIGUA_H);
   // Logos: piscina | ajuntament
-  const lpH = 132, lpW = lp.width * lpH / lp.height, laH = 78, laW = la.width * laH / la.height, gap = 34;
-  const total = lpW + gap + 3 + gap + laW; let x = (AIGUA_W - total) / 2;
-  ctx.drawImage(lp, x, 26, lpW, lpH); x += lpW + gap;
-  ctx.fillStyle = "#0B3F7A"; ctx.globalAlpha = .75; ctx.fillRect(x, 26 + (lpH - 90) / 2, 3, 90); ctx.globalAlpha = 1; x += 3 + gap;
-  ctx.drawImage(la, x, 26 + (lpH - laH) / 2, laW, laH);
+  const lpH = 190, lpW = lp.width * lpH / lp.height, laH = 112, laW = la.width * laH / la.height, gap = 48, ly = 70;
+  const total = lpW + gap + 4 + gap + laW; let x = (AIGUA_W - total) / 2;
+  ctx.drawImage(lp, x, ly, lpW, lpH); x += lpW + gap;
+  ctx.fillStyle = "#0B3F7A"; ctx.globalAlpha = .75; ctx.fillRect(x, ly + (lpH - 130) / 2, 4, 130); ctx.globalAlpha = 1; x += 4 + gap;
+  ctx.drawImage(la, x, ly + (lpH - laH) / 2, laW, laH);
   const cx = AIGUA_W / 2; const navy = "#0B3F7A";
   ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
-  ctx.fillStyle = navy; ctx.font = "500 38px Outfit, sans-serif"; spacedText(ctx, "DIPLOMA D'APROFITAMENT", cx, 212, 11.5);
-  ctx.fillStyle = "#1f5c9e"; ctx.font = "400 30px Outfit, sans-serif"; ctx.fillText("atorgat a", cx, 252);
-  ctx.fillStyle = navy; ctx.font = "700 84px Fraunces, Georgia, serif"; ctx.fillText(nom, cx, 344, 820);
-  let y = 344;
-  if (cognoms) { ctx.font = "600 50px Fraunces, Georgia, serif"; ctx.fillText(cognoms, cx, 400, 820); y = 400; }
+  ctx.fillStyle = navy; ctx.font = "500 54px Outfit, sans-serif"; spacedText(ctx, "DIPLOMA D'APROFITAMENT", cx, 365, 16);
+  ctx.fillStyle = "#1f5c9e"; ctx.font = "400 42px Outfit, sans-serif"; ctx.fillText("atorgat a", cx, 425);
+  ctx.fillStyle = navy; ctx.font = "700 124px Fraunces, Georgia, serif"; ctx.fillText(nom, cx, 555, 1200);
+  let y = 555;
+  if (cognoms) { ctx.font = "600 72px Fraunces, Georgia, serif"; ctx.fillText(cognoms, cx, 640, 1200); y = 640; }
   // Nivell en una píndola
-  ctx.font = "600 28px Fraunces, Georgia, serif";
-  const pw = ctx.measureText(level).width + 88, ph = 44, py = y + 18;
-  ctx.fillStyle = "#D6EBFB"; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx - pw / 2, py, pw, ph, 22) : ctx.rect(cx - pw / 2, py, pw, ph); ctx.fill();
-  ctx.fillStyle = "#174f8a"; ctx.fillText(level, cx, py + 31);
-  // Observacions (fins a 4 línies; si és molt llarg, lletra més menuda)
-  let size = 27, lines;
-  for (;;) { ctx.font = `400 ${size}px Inter, sans-serif`; lines = wrapLines(ctx, txt, 760); if (lines.length <= 4 || size <= 19) break; size -= 1.5; }
-  const lh = size * 1.36, top = py + ph + 22, blockH = 128;
+  ctx.font = "600 40px Fraunces, Georgia, serif";
+  const pw = ctx.measureText(level).width + 120, ph = 64, py = y + 30;
+  ctx.fillStyle = "#D6EBFB"; ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx - pw / 2, py, pw, ph, 32) : ctx.rect(cx - pw / 2, py, pw, ph); ctx.fill();
+  ctx.fillStyle = "#174f8a"; ctx.fillText(level, cx, py + 45);
+  // Observacions (fins a 5 línies; si és molt llarg, lletra més menuda)
+  let size = 38, lines;
+  for (;;) { ctx.font = `400 ${size}px Inter, sans-serif`; lines = wrapLines(ctx, txt, 1050); if (lines.length <= 5 || size <= 26) break; size -= 2; }
+  const lh = size * 1.38, top = py + ph + 40, blockH = 270;
   const startY = top + (blockH - lines.length * lh) / 2 + size * 0.95;
   ctx.fillStyle = "#173a5e"; lines.forEach((l, i) => ctx.fillText(l, cx, startY + i * lh));
   // Signatura del monitor
-  if (monitor) { ctx.fillStyle = navy; ctx.font = "600 64px Caveat, cursive"; ctx.fillText(monitor, cx, 690, 360); }
-  ctx.fillStyle = "#173a5e"; ctx.font = "400 22px Inter, sans-serif"; ctx.fillText("El monitor/a", cx, 724);
+  if (monitor) { ctx.fillStyle = navy; ctx.font = "600 92px Caveat, cursive"; ctx.fillText(monitor, cx, 1175, 520); }
+  ctx.fillStyle = "#173a5e"; ctx.font = "400 32px Inter, sans-serif"; ctx.fillText("El monitor/a", cx, 1222);
   canvas.dataset.ready = "1";
 }
 function DiplomaFrontAigua({ student, group, level, comment }) {
@@ -1375,8 +1379,8 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
   const items = itemsOf(level);
   const t = themeOf(level);
   return (
-    <div className="dip" style={{ "--dipaccent": t.c, display: "flex", flexDirection: "column" }}>
-      <div className="dip-band" />
+    <div className={`dip ${DIPLOMA_ANVERS === "aigua" ? "dip-aigua-rev" : ""}`} style={{ "--dipaccent": t.c, display: "flex", flexDirection: "column" }}>
+      {DIPLOMA_ANVERS === "aigua" ? <img className="dip-bg" src="/diploma-revers.jpg" alt="" /> : <div className="dip-band" />}
       {/* Capçalera */}
       <div className="flex items-center justify-between" style={{ marginBottom: 12, marginTop: 4 }}>
         <div>
