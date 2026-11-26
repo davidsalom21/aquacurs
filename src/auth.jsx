@@ -19,7 +19,7 @@ function Header({ subtitle }) {
         <img src="/icon-192.png" alt="AquaCurs" style={{ width: 40, height: 40, borderRadius: 11, display: "block", flexShrink: 0 }} />
         <div>
           <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.18rem", lineHeight: 1 }}>AquaCurs</div>
-          <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>{subtitle || "Escola de Natació · Temporada 25-26"}</div>
+          <div style={{ fontSize: ".74rem", opacity: .7, marginTop: 2 }}>{subtitle || "Escola de Natació · Temporada 26-27"}</div>
         </div>
       </div>
     </header>

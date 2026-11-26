@@ -9,7 +9,9 @@ import {
   waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, EMAIL_RE
 } from "./diplomaPdf.js";
 import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON,
-  saveExtra, deleteExtra, fetchEspera, addEspera, deleteEspera } from "./db.js";
+  saveExtra, deleteExtra, fetchEspera, addEspera, deleteEspera,
+  fetchLlistaGrup, fetchSessions, fetchAssistencia, validarAssistencia } from "./db.js";
+import { hasSession, comesOn, isoOf, todayIso, FESTA_CLOENDA } from "./calendari.js";
 import { Login, ConfigMissing, ChangePasswordModal, UsersPanel, GroupsPanel } from "./auth.jsx";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -594,9 +596,9 @@ async function storeSet(k, v) { try { localStorage.setItem("aquacurs:" + k, JSON
 
 /* ============================ ROLS ============================ */
 const ROLES = {
-  monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["aval"], defaultTab: "aval" },
-  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "recep", "taul", "dades", "usu"], defaultTab: "segu" },
-  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "recep", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
+  monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["cal", "aval"], defaultTab: "cal" },
+  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "asis", "recep", "taul", "dades", "usu"], defaultTab: "segu" },
+  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "asis", "recep", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
   recepcio: { label: "Recepció", icon: Users, desc: "Inscriu alumnes, canvia'ls de grup i gestiona la llista d'espera.", tabs: ["recep"], defaultTab: "recep" },
 };
 
@@ -734,6 +736,8 @@ function AppConnected() {
     { id: "dades", label: "Dades", icon: Database },
     { id: "usu", label: "Usuaris", icon: KeyRound },
     { id: "recep", label: "Recepció", icon: Users },
+    { id: "cal", label: "Calendari", icon: Calendar },
+    { id: "asis", label: "Assistència", icon: Calendar },
   ];
 
   if (boot.checking) return <div className="sn-root" style={{ minHeight: "100vh" }}><style>{CSS}</style></div>;
@@ -804,6 +808,8 @@ function AppConnected() {
         {activeTab === "ruti" && <Rutines />}
         {activeTab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} onGroupSaved={onGroupSaved} />}
         {activeTab === "usu" && <UsersPanel profiles={profiles} me={me} onChanged={reloadAll} />}
+        {activeTab === "cal" && <Calendari me={me} isCoord={false} />}
+        {activeTab === "asis" && <Calendari me={me} isCoord />}
         {activeTab === "recep" && <Recepcio students={students} setStudents={setStudents} me={me} isCoord={isCoordRole(role)} bump={() => setGroupsVer((v) => v + 1)} />}
       </main>
       {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
@@ -965,7 +971,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
             <>
               {dl && <span className="sn-pill" style={{ background: "#2f6f9f14", color: "#2f6f9f", fontSize: ".66rem" }}><Calendar size={11} /> {dl}</span>}
               {s.extra && <span className="sn-pill" style={{ background: "var(--surface)", color: "var(--muted)", fontSize: ".66rem" }} title="Ve també a un altre grup, on li posen les notes">Notes en un altre grup ({groupById(s.grupId)?.codi || groupById(s.grupId)?.nivell || "—"})</span>}
-              {shared && !s.monitorNotes && <span className="sn-pill" style={{ background: "var(--sun)1c", color: "#8a5a10", fontSize: ".66rem" }}>Sense monitor de notes</span>}
+              {shared && !s.monitorNotes && <span className="sn-pill" style={{ background: "#E2A23A1c", color: "#8a5a10", fontSize: ".66rem" }}>Sense monitor de notes</span>}
               {shared && s.monitorNotes && <span className="sn-pill" style={{ background: "var(--surface)", color: s.monitorNotes === monitor ? "var(--deep)" : "var(--muted)", fontSize: ".66rem" }}>Notes: {s.monitorNotes === monitor ? "tu" : s.monitorNotes}</span>}
               {!shared && !s.extra && !isCoord && !notesHere && <span className="sn-pill" style={{ background: "var(--surface)", color: "var(--muted)", fontSize: ".66rem" }}>Notes: {nm}</span>}
             </>
@@ -1053,7 +1059,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
             </div>
           )}
           {!canGrade && (
-            <div style={{ background: "var(--sun)1c", border: "1px solid var(--sun)66", borderRadius: 10, padding: "9px 11px", fontSize: ".82rem", color: "#8a5a10", marginBottom: 12 }}>
+            <div style={{ background: "#E2A23A1c", border: "1px solid #E2A23A66", borderRadius: 10, padding: "9px 11px", fontSize: ".82rem", color: "#8a5a10", marginBottom: 12 }}>
               Les notes d'aquest alumne les posa <b>{notesMonitorOf(student) || "un altre monitor"}</b>. Pots veure-les, però no canviar-les.
             </div>
           )}
@@ -2545,7 +2551,7 @@ function Recepcio({ students, setStudents, me, isCoord, bump }) {
               <div key={k} className="sn-card sn-shadow mb-3" style={{ background: "#fff", overflow: "hidden" }}>
                 <div style={{ padding: "8px 14px", background: "var(--surface)", fontWeight: 700, fontSize: ".86rem" }}>{t}</div>
                 {list.map((x) => (
-                  <div key={x.id} className="sn-row" style={{ padding: "9px 14px", borderTop: "1px solid var(--line)", background: x.id === gid ? "var(--aqua)14" : undefined }} onClick={() => setGid(x.id)}>
+                  <div key={x.id} className="sn-row" style={{ padding: "9px 14px", borderTop: "1px solid var(--line)", background: x.id === gid ? "#12B0A014" : undefined }} onClick={() => setGid(x.id)}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div style={{ fontSize: ".86rem" }}><b>{x.horaInici || x.hora}</b> · {x.nivell}</div>
                       <CapBadges students={students} g={x} />
@@ -2645,6 +2651,197 @@ function Recepcio({ students, setStudents, me, isCoord, bump }) {
           </div>
         ); })}
       </div>
+    </div>
+  );
+}
+
+/* ============================ CALENDARI I ASSISTÈNCIA ============================ */
+const MESOS = ["Gener", "Febrer", "Març", "Abril", "Maig", "Juny", "Juliol", "Agost", "Setembre", "Octubre", "Novembre", "Desembre"];
+const DIES_CURT = ["DL", "DM", "DX", "DJ", "DV", "DS", "DG"];
+const fmtLlarg = (iso) => { const [y, m, d] = iso.split("-").map(Number); const t = new Date(y, m - 1, d).toLocaleDateString("ca-ES", { weekday: "long", day: "numeric", month: "long" }); return t.charAt(0).toUpperCase() + t.slice(1); };
+const groupsOnDay = (iso) => GROUPS.filter((g) => hasSession(g, iso)).sort((a, b) => minutesOf(a.horaInici || a.hora) - minutesOf(b.horaInici || b.hora));
+
+function Calendari({ me, isCoord }) {
+  const today = todayIso();
+  const [month, setMonth] = useState(() => { const t = new Date(); return { y: t.getFullYear(), m: t.getMonth() }; });
+  const [day, setDay] = useState(today);
+  const [sessions, setSessions] = useState({});      // "data|grup" -> sessió validada
+  const [loadErr, setLoadErr] = useState("");
+  const [open, setOpen] = useState(null);            // grup obert per a passar llista / veure
+  const [allGroups, setAllGroups] = useState(isCoord);
+  const mine = (g) => isMonitorOf(g, me.nom);
+
+  const from = isoOf(new Date(month.y, month.m, 1)), to = isoOf(new Date(month.y, month.m + 1, 0));
+  const loadSessions = useCallback(() => {
+    fetchSessions(from, to).then((rows) => { const o = {}; rows.forEach((r) => { o[r.data + "|" + r.grup_id] = r; }); setSessions(o); setLoadErr(""); })
+      .catch((e) => setLoadErr(e.message));
+  }, [from, to]);
+  useEffect(loadSessions, [loadSessions]);
+
+  // Graella del mes (setmanes de dilluns a diumenge)
+  const first = new Date(month.y, month.m, 1); const lead = (first.getDay() + 6) % 7;
+  const nDays = new Date(month.y, month.m + 1, 0).getDate();
+  const cells = [...Array(lead).fill(null), ...Array.from({ length: nDays }, (_, i) => isoOf(new Date(month.y, month.m, i + 1)))];
+  const shift = (k) => setMonth(({ y, m }) => { const d = new Date(y, m + k, 1); return { y: d.getFullYear(), m: d.getMonth() }; });
+
+  const dayGroups = groupsOnDay(day).filter((g) => allGroups || mine(g));
+  const statusOf = (g, iso) => sessions[iso + "|" + g.id];
+
+  if (open) return <PassarLlista g={open.g} iso={open.iso} me={me} isCoord={isCoord} session={statusOf(open.g, open.iso)} onClose={(changed) => { setOpen(null); if (changed) loadSessions(); }} />;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div>
+          <h2 className="sn-display" style={{ fontSize: "1.5rem", fontWeight: 800 }}>{isCoord ? "Assistència" : "El meu calendari"}</h2>
+          <p style={{ color: "var(--muted)", fontSize: ".86rem" }}>{isCoord ? "Tria un dia per veure quins grups han passat llista i qui ha vingut." : "Tria un dia, obri el grup i passa llista en acabar la classe."}</p>
+        </div>
+        {!isCoord && (
+          <label className="flex items-center gap-2" style={{ fontSize: ".82rem", color: "var(--muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={allGroups} onChange={(e) => setAllGroups(e.target.checked)} /> Veure tots els grups (substitucions)
+          </label>
+        )}
+      </div>
+      {loadErr && <div style={{ color: "var(--coral)", fontSize: ".84rem", marginBottom: 10 }}>{loadErr}</div>}
+
+      <div className="recep-grid">
+        <div className="sn-card sn-shadow" style={{ background: "#fff", padding: 14 }}>
+          <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+            <button className="sn-btn sn-btn-ghost" style={{ padding: ".4rem .6rem" }} onClick={() => shift(-1)}><ChevronLeft size={16} /></button>
+            <div className="sn-display" style={{ fontWeight: 700 }}>{MESOS[month.m]} {month.y}</div>
+            <button className="sn-btn sn-btn-ghost" style={{ padding: ".4rem .6rem" }} onClick={() => shift(1)}><ChevronRight size={16} /></button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4, textAlign: "center" }}>
+            {DIES_CURT.map((d) => <div key={d} style={{ fontSize: ".66rem", fontWeight: 700, color: "var(--muted)" }}>{d}</div>)}
+            {cells.map((iso, i) => {
+              if (!iso) return <div key={"e" + i} />;
+              const gs = groupsOnDay(iso).filter((g) => allGroups || mine(g));
+              const done = gs.filter((g) => statusOf(g, iso)).length;
+              const past = iso <= today;
+              const sel = iso === day;
+              const color = !gs.length ? "transparent" : done === gs.length ? "var(--puja)" : past ? "var(--coral)" : "#b8c9c6";
+              return (
+                <button key={iso} onClick={() => setDay(iso)} style={{ border: sel ? "2px solid var(--deep)" : "1px solid var(--line)", borderRadius: 10, padding: "6px 0 5px", background: iso === today ? "#12B0A014" : "#fff", cursor: "pointer", opacity: gs.length ? 1 : .45 }}>
+                  <div style={{ fontSize: ".86rem", fontWeight: 600, color: "var(--deep)" }}>{+iso.slice(8)}</div>
+                  <div style={{ height: 6, display: "flex", justifyContent: "center", marginTop: 2 }}>{gs.length > 0 && <span style={{ width: 6, height: 6, borderRadius: 6, background: color }} />}</div>
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex gap-3 flex-wrap" style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: 10 }}>
+            <span><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 7, background: "var(--puja)" }} /> llista passada</span>
+            <span><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 7, background: "var(--coral)" }} /> pendent</span>
+            <span><span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 7, background: "#b8c9c6" }} /> classe pròxima</span>
+          </div>
+        </div>
+
+        <div className="recep-detail">
+          <div className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden" }}>
+            <div style={{ padding: "10px 14px", background: "var(--surface)", fontWeight: 700, fontSize: ".9rem" }}>{fmtLlarg(day)}{day === FESTA_CLOENDA ? " · festa de cloenda" : ""}</div>
+            {dayGroups.length === 0 && <div style={{ padding: 16, color: "var(--muted)", fontSize: ".86rem" }}>{groupsOnDay(day).length ? "Hui no tens cap grup." : "No hi ha classe aquest dia."}</div>}
+            {dayGroups.map((g) => {
+              const st = statusOf(g, day);
+              return (
+                <div key={g.id} className="sn-row flex items-center justify-between gap-2 flex-wrap" style={{ padding: "11px 14px", borderTop: "1px solid var(--line)" }} onClick={() => setOpen({ g, iso: day })}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{g.horaInici || g.hora} · {g.nivell}</div>
+                    <div style={{ fontSize: ".74rem", color: "var(--muted)" }}>{g.codi} · {groupMonitors(g).join(" i ") || UNASSIGNED}{!mine(g) && !isCoord ? " · substitució" : ""}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {st ? <span className="sn-pill" style={{ background: "#12A88E1c", color: "var(--puja)", fontSize: ".68rem" }}><Check size={11} /> {st.validat_per}{st.corregit_per ? ` · corregit` : ""}</span>
+                      : day <= today ? <span className="sn-pill" style={{ background: "#f08a5d18", color: "var(--coral)", fontSize: ".68rem" }}>Pendent</span>
+                      : <span className="sn-pill" style={{ background: "var(--surface)", color: "var(--muted)", fontSize: ".68rem" }}>Pròximament</span>}
+                    <ChevronRight size={16} color="var(--muted)" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PassarLlista({ g, iso, me, isCoord, session, onClose }) {
+  const [list, setList] = useState(null);
+  const [present, setPresent] = useState({});
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(!session);
+  const future = iso > todayIso();
+  const canEdit = !future && (!session || isCoord);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const l = (await fetchLlistaGrup(g.id)).filter((s) => comesOn(s.dies, iso));
+        setList(l);
+        if (session) {
+          const rows = await fetchAssistencia(g.id, iso);
+          const p = {}; rows.forEach((r) => { p[r.student_id] = r.present; }); setPresent(p);
+          // alumnes que ja no són al grup però estan al registre
+          const ids = new Set(l.map((s) => s.id));
+          const gone = rows.filter((r) => !ids.has(r.student_id));
+          if (gone.length) setList([...l, ...gone.map((r) => ({ id: r.student_id, nom: `Alumne #${r.student_id} (ja no és al grup)`, dies: null }))]);
+        }
+      } catch (e) { setErr(e.message); setList([]); }
+    })();
+  }, [g.id, iso, session]);
+
+  const toggle = (id) => editing && canEdit && setPresent((p) => ({ ...p, [id]: !p[id] }));
+  const allOn = () => setPresent(Object.fromEntries((list || []).map((s) => [s.id, true])));
+  const validar = async () => {
+    setBusy(true); setErr("");
+    const ids = (list || []).map((s) => s.id);
+    try { await validarAssistencia(g.id, iso, ids.filter((id) => present[id]), ids.filter((id) => !present[id])); onClose(true); }
+    catch (e) { setErr(e.message); setBusy(false); }
+  };
+  const nPres = (list || []).filter((s) => present[s.id]).length;
+
+  return (
+    <div>
+      <button className="sn-btn sn-btn-ghost" style={{ marginBottom: 12 }} onClick={() => onClose(false)}><ChevronLeft size={16} /> Tornar al calendari</button>
+      <div className="sn-card sn-shadow" style={{ background: "#fff", padding: 16, marginBottom: 12 }}>
+        <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.15rem" }}>{g.nivell} · {g.horaInici || g.hora}</div>
+        <div style={{ fontSize: ".8rem", color: "var(--muted)" }}>{fmtLlarg(iso)} · {g.codi} · {groupMonitors(g).join(" i ")}</div>
+        {session && <div style={{ fontSize: ".8rem", color: "var(--puja)", marginTop: 6 }}><Check size={13} style={{ display: "inline" }} /> Validada per {session.validat_per} el {fmtDate(session.validat_at)}{session.corregit_per ? ` · corregida per ${session.corregit_per} el ${fmtDate(session.corregit_at)}` : ""}</div>}
+        {future && <div style={{ fontSize: ".8rem", color: "var(--muted)", marginTop: 6 }}>Aquesta classe encara no s'ha fet: es podrà passar llista el mateix dia.</div>}
+        {!isMonitorOf(g, me.nom) && !isCoord && !session && !future && <div style={{ fontSize: ".8rem", color: "#8a5a10", marginTop: 6 }}>No és un grup teu: passa llista només si avui el cobreixes tu. Quedarà registrat amb el teu nom.</div>}
+      </div>
+      {err && <div style={{ color: "var(--coral)", fontSize: ".84rem", marginBottom: 10 }}>{err}</div>}
+      <div className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden" }}>
+        {list === null && <div style={{ padding: 16, color: "var(--muted)" }}><Loader2 size={15} className="animate-spin" style={{ display: "inline", marginRight: 6 }} />Carregant la llista…</div>}
+        {list && list.length === 0 && <div style={{ padding: 16, color: "var(--muted)" }}>No hi ha alumnes per a aquest dia.</div>}
+        {list && list.map((s, i) => {
+          const on = !!present[s.id];
+          return (
+            <div key={s.id} className={editing && canEdit ? "sn-row" : ""} onClick={() => toggle(s.id)} style={{ padding: "12px 14px", borderTop: i ? "1px solid var(--line)" : "none", display: "flex", alignItems: "center", gap: 12, opacity: s.baixa ? .55 : 1 }}>
+              <span style={{ width: 26, height: 26, borderRadius: 7, border: `2px solid ${on ? "var(--puja)" : "#c9d6d4"}`, background: on ? "var(--puja)" : "#fff", display: "grid", placeItems: "center", flexShrink: 0 }}>{on && <Check size={16} color="#fff" />}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: ".92rem" }}>{s.nom}</div>
+                <div className="flex gap-1 flex-wrap">
+                  {s.dies && <span style={{ fontSize: ".7rem", color: "#2f6f9f" }}>{diesLabel(s.dies)}</span>}
+                  {s.extra && <span style={{ fontSize: ".7rem", color: "var(--muted)" }}>· ve també a un altre grup</span>}
+                  {s.baixa && <span style={{ fontSize: ".7rem", color: "var(--coral)" }}>· avís de baixa</span>}
+                </div>
+              </div>
+              {!editing && session && <span style={{ fontSize: ".74rem", fontWeight: 600, color: on ? "var(--puja)" : "var(--coral)" }}>{on ? "Ha vingut" : "No ha vingut"}</span>}
+            </div>
+          );
+        })}
+      </div>
+      {list && list.length > 0 && (
+        <div className="flex items-center justify-between flex-wrap gap-2" style={{ marginTop: 12 }}>
+          <div style={{ fontSize: ".86rem", color: "var(--muted)" }}><b style={{ color: "var(--deep)" }}>{nPres}</b> de {list.length} han vingut</div>
+          <div className="flex gap-2">
+            {editing && canEdit && <button className="sn-btn sn-btn-ghost" onClick={allOn}>Marcar tots</button>}
+            {editing && canEdit && <button className="sn-btn sn-btn-primary" disabled={busy} onClick={validar}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} {session ? "Desar la correcció" : "Validar l'assistència"}</button>}
+            {!editing && session && isCoord && <button className="sn-btn sn-btn-ghost" onClick={() => setEditing(true)}>Corregir</button>}
+          </div>
+        </div>
+      )}
+      {editing && canEdit && !session && <p style={{ fontSize: ".76rem", color: "var(--muted)", marginTop: 8 }}>Un cop validada, només coordinació la pot corregir.</p>}
     </div>
   );
 }
