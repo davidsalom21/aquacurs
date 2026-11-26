@@ -6,7 +6,7 @@
    ============================================================ */
 import { createClient } from "@supabase/supabase-js";
 
-export const SEASON = "25-26";
+export const SEASON = "26-27";
 
 const URL = import.meta.env.VITE_SUPABASE_URL;
 const KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;

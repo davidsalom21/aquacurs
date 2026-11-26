@@ -8,7 +8,7 @@ import {
 import {
   waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, EMAIL_RE
 } from "./diplomaPdf.js";
-import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey } from "./db.js";
+import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON } from "./db.js";
 import { Login, ConfigMissing, ChangePasswordModal, UsersPanel, GroupsPanel } from "./auth.jsx";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -59,16 +59,17 @@ const CSS = `
 .eval-side{position:sticky;top:16px}
 @media (max-width:760px){.eval-grid{grid-template-columns:minmax(0,1fr)}.eval-side{position:static}}
 /* DIPLOMA */
-.dip{background:var(--paper);color:#23303a;border-radius:14px;padding:30px 34px;position:relative;overflow:hidden;border:1px solid #e7dcc2;min-height:440px}
+/* Format apaïsat (A4 horitzontal): la proporció 297:210 es manté i, si el contingut no cap, la cara creix */
+.dip{background:var(--paper);color:#23303a;border-radius:14px;padding:30px 40px;position:relative;overflow:hidden;border:1px solid #e7dcc2;aspect-ratio:297/210;width:100%}
 .dip:before{content:"";position:absolute;inset:10px;border:2px solid var(--dipaccent,var(--gold));border-radius:8px;opacity:.5;pointer-events:none}
 .dip-w{position:absolute;left:0;right:0;bottom:-18px;height:60px;opacity:.12;color:var(--dipaccent,var(--deep))}
 .dip-band{position:absolute;top:0;left:0;right:0;height:8px;background:var(--dipaccent,var(--gold))}
 @media print{
-  @page{size:A4 portrait;margin:10mm}
+  @page{size:A4 landscape;margin:10mm}
   body *{visibility:hidden}
   #print-area,#print-area *{visibility:visible}
   #print-area{position:absolute;inset:0;margin:0;padding:0;background:#fff;display:block !important}
-  .dip{margin:0 auto 7mm;border-radius:0;border:1px solid #e7dcc2;min-height:0;width:100%;max-width:185mm;padding:16px 20px;break-inside:avoid}
+  .dip{margin:0 auto;border-radius:0;border:1px solid #e7dcc2;width:100%;max-width:277mm;max-height:190mm;padding:18px 26px;break-inside:avoid;break-after:page}
   .dip:before{inset:6px}
   .no-print{display:none !important}
 }
@@ -231,7 +232,7 @@ const UNASSIGNED = "Sense assignar";
 const monitorOf = (g) => (g && g.monitor) || UNASSIGNED;
 
 // Estat de cada alumne: pendent → en curs → avaluat → diploma llest (el marca el monitor) → enviat (coordinació)
-const evKey = (sid) => `25-26:${sid}`;
+const evKey = (sid) => `${SEASON}:${sid}`;
 const STATUS_ORDER = ["pendent", "encurs", "avaluat", "llest", "enviat"];
 const STATUS_META = {
   pendent: { label: "Pendent", c: "#8a8472" },
@@ -396,7 +397,7 @@ function ageFloorIdx(age) {
 }
 // Ràtio màxim per nivell (de la taula oficial) per a estimar grups
 const LEVEL_CAP = {
-  "Nadons Pares": 8, "Nadons Alt": 4, "Infants Baix": 7, "Infants Mig-Alt": 8,
+  "Nadons Pares": 16, "Nadons Alt": 4, "Infants Baix": 7, "Infants Mig-Alt": 8,
   "Xiquets Iniciació-Mitjà": 10, "Xiquets Mitjà-Perfeccionament": 16,
 };
 // Recomanació final: combina nota + edat + ajust manual. agePromoted = passa per edat tot i no assolir-ho per nota.
@@ -468,7 +469,7 @@ const RESULT_META = {
 const SCORE_LABEL = { 1: "Inicia", 2: "En procés", 3: "Assolit", 4: "Excel·lent" };
 
 // ---- Data de naixement → edat a l'inici de temporada (1 d'octubre) ----
-const SEASON_START = new Date(2025, 9, 1); // 1 oct 2025
+const SEASON_START = new Date(2026, 9, 1); // 1 oct 2026 (temporada 26-27)
 function parseDate(v) {
   if (v == null || v === "") return null;
   if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
@@ -514,7 +515,7 @@ function seedStudents() {
       const octAge = (baseAge[g.nivell] || 6) + Math.floor(rng() * 2);
       const month = rng() < 0.16 ? (rng() < 0.5 ? 11 : 12) : 1 + Math.floor(rng() * 9);
       const day = 1 + Math.floor(rng() * 27);
-      const naixement = `${2025 - octAge}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const naixement = `${SEASON_START.getFullYear() - octAge}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
       out.push({ id, nom, email, naixement, grupId: g.id });
     }
   });
@@ -534,13 +535,13 @@ function seedEvaluations(students) {
       else v = r < 0.35 ? 2 : r < 0.7 ? 3 : 4;
       sc[it.id] = v;
     });
-    ev[`25-26:${st.id}`] = { scores: sc, monitor: g.monitor };
+    ev[`${SEASON}:${st.id}`] = { scores: sc, monitor: g.monitor };
   });
   return ev;
 }
 // Resum agregat temporada anterior (per a comparativa)
 const PREV_SEASON = {
-  label: "24-25",
+  label: "25-26",
   byLevel: {
     "Nadons Pares": { PUJA: 9, MANTÉ: 4, REFORÇ: 1 },
     "Nadons Alt": { PUJA: 7, MANTÉ: 5, REFORÇ: 2 },
@@ -790,7 +791,7 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
   const student = students.find((s) => s.id === studentId);
 
   const setScore = (sid, itemId, val) => {
-    const key = `25-26:${sid}`;
+    const key = `${SEASON}:${sid}`;
     const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
     setEvals((prev) => {
       const cur = prev[key]?.scores || {};
@@ -798,20 +799,20 @@ function Avaluacio({ students, setStudents, evals, setEvals, role, me }) {
       return { ...prev, [key]: { ...(prev[key] || {}), scores: next, monitor: prev[key]?.monitor || gm } };
     });
   };
-  const scoresFor = (sid) => evals[`25-26:${sid}`]?.scores || {};
-  const overrideFor = (sid) => evals[`25-26:${sid}`]?.override || null;
+  const scoresFor = (sid) => evals[`${SEASON}:${sid}`]?.scores || {};
+  const overrideFor = (sid) => evals[`${SEASON}:${sid}`]?.override || null;
   const setOverride = (sid, lvl) => {
-    const key = `25-26:${sid}`;
+    const key = `${SEASON}:${sid}`;
     const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
     setEvals((prev) => {
       const cur = prev[key] || { scores: {}, monitor: gm };
       return { ...prev, [key]: { ...cur, override: lvl } };
     });
   };
-  const commentFor = (sid) => { const e = evals[`25-26:${sid}`]; return e && "comment" in e ? e.comment : null; };
+  const commentFor = (sid) => { const e = evals[`${SEASON}:${sid}`]; return e && "comment" in e ? e.comment : null; };
   const diplomaActions = makeDiplomaActions(evals, setEvals);
   const setComment = (sid, val) => {
-    const key = `25-26:${sid}`;
+    const key = `${SEASON}:${sid}`;
     const gm = groupById(students.find((s) => s.id === sid)?.grupId)?.monitor || monitor;
     setEvals((prev) => {
       const cur = prev[key] || { scores: {}, monitor: gm };
@@ -1130,18 +1131,18 @@ function DiplomaFront({ student, level, group, comment }) {
 
       {/* Logo de la piscina (protagonista) */}
       <div style={{ display: "flex", justifyContent: "center", marginTop: 8, marginBottom: 2, position: "relative", zIndex: 2 }}>
-        <img src={LOGO_PISCINA} alt="Piscina Municipal Carcaixent" style={{ height: 78, display: "block" }} />
+        <img src={LOGO_PISCINA} alt="Piscina Municipal Carcaixent" style={{ height: 104, display: "block" }} />
       </div>
 
       {/* Cos central */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", padding: "4px 0", position: "relative", zIndex: 2 }}>
-        <div style={{ fontSize: ".74rem", letterSpacing: ".26em", textTransform: "uppercase", color: t.c, marginBottom: 10, fontWeight: 600 }}>Diploma d'aprofitament</div>
-        <div style={{ fontSize: ".74rem", color: "#6b7680", marginBottom: 2 }}>Atorgat a</div>
-        <div className="sn-serif" style={{ fontSize: "2.4rem", fontWeight: 700, color: "var(--deep)", lineHeight: 1.05 }}>{nom}</div>
-        {cognoms && <div className="sn-serif" style={{ fontSize: "1.45rem", fontWeight: 400, color: "#3a4750", lineHeight: 1.1, marginTop: 2 }}>{cognoms}</div>}
-        <div className="sn-pill" style={{ background: t.c + "1f", color: t.c, margin: "11px auto 0", fontSize: ".74rem" }}>{level}</div>
-        <div style={{ fontSize: ".8rem", color: "#5a6670", marginTop: 11, maxWidth: 380, marginInline: "auto", lineHeight: 1.5, fontStyle: comment ? "normal" : "italic" }}>
-          {comment || "per la seua participació i progressió durant la temporada 2025-2026."}
+        <div style={{ fontSize: ".95rem", letterSpacing: ".26em", textTransform: "uppercase", color: t.c, marginBottom: 12, fontWeight: 600 }}>Diploma d'aprofitament</div>
+        <div style={{ fontSize: ".9rem", color: "#6b7680", marginBottom: 4 }}>Atorgat a</div>
+        <div className="sn-serif" style={{ fontSize: "3.3rem", fontWeight: 700, color: "var(--deep)", lineHeight: 1.05 }}>{nom}</div>
+        {cognoms && <div className="sn-serif" style={{ fontSize: "1.9rem", fontWeight: 400, color: "#3a4750", lineHeight: 1.1, marginTop: 4 }}>{cognoms}</div>}
+        <div className="sn-pill" style={{ background: t.c + "1f", color: t.c, margin: "14px auto 0", fontSize: ".9rem" }}>{level}</div>
+        <div style={{ fontSize: "1rem", color: "#5a6670", marginTop: 14, maxWidth: 560, marginInline: "auto", lineHeight: 1.5, fontStyle: comment ? "normal" : "italic" }}>
+          {comment || "per la seua participació i progressió durant la temporada 2026-2027."}
         </div>
       </div>
 
@@ -1187,7 +1188,7 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
       </div>
 
       {/* Ítems amb nota */}
-      <div style={{ flex: 1, columnCount: items.length > 10 ? 2 : 1, columnGap: 24, fontSize: ".72rem" }}>
+      <div style={{ flex: 1, columnCount: items.length > 6 ? 2 : 1, columnGap: 24, fontSize: ".72rem" }}>
         {(ITEMS[level] || []).map((it, i) => {
           if (it.s) return <div key={"s" + i} className="sn-display" style={{ fontWeight: 700, fontSize: ".62rem", letterSpacing: ".08em", textTransform: "uppercase", color: t.c, margin: "9px 0 3px", breakInside: "avoid" }}>{it.s}</div>;
           const v = scores[it.id];
@@ -1208,7 +1209,7 @@ function DiplomaBack({ student, level, group, scores, recOverride }) {
         </div>
       </div>
       <div style={{ marginTop: 10, background: t.c, color: "#fff", borderRadius: 10, padding: "12px 16px" }}>
-        <div style={{ fontSize: ".64rem", letterSpacing: ".14em", textTransform: "uppercase", opacity: .8 }}>Nivell recomanat per a la temporada 26-27</div>
+        <div style={{ fontSize: ".64rem", letterSpacing: ".14em", textTransform: "uppercase", opacity: .8 }}>Nivell recomanat</div>
         <div className="sn-display" style={{ fontWeight: 800, fontSize: "1.2rem", marginTop: 2 }}>{rec}</div>
       </div>
     </div>
@@ -1397,7 +1398,9 @@ function SingleDiplomaButton({ student, level, group, scores, recOverride, comme
 }
 
 /* ============================ ENVIAMENT DE DIPLOMES PER CORREU (només coordinació) ============================ */
-const SEASON_LABEL = "25-26";
+const SEASON_LABEL = SEASON;
+// Temporada següent (p. ex. "26-27" → "27-28"), per a la planificació de grups
+const NEXT_SEASON = SEASON.split("-").map((y) => String(+y + 1).padStart(2, "0")).join("-");
 const SEND_DELAY_MS = 700; // pausa entre correus (límit de velocitat de Resend)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1528,7 +1531,7 @@ function SendDiplomasPanel({ entries, level, group, onSent, onClose }) {
 
       {/* Diploma renderitzat fora de pantalla, amb amplada fixa, per a fer el PDF */}
       {current && (
-        <div ref={offRef} data-pdf-root style={{ position: "fixed", left: -10000, top: 0, width: 720, background: "#fff", display: "grid", gap: 16 }}>
+        <div ref={offRef} data-pdf-root style={{ position: "fixed", left: -10000, top: 0, width: 1000, background: "#fff", display: "grid", gap: 16 }}>
           <Diploma student={current.student} level={level} group={group} scores={current.scores} recOverride={current.recOverride} comment={current.comment} />
         </div>
       )}
@@ -1711,7 +1714,7 @@ function Tauler({ students, evals }) {
     const perMonitor = {};
     let avgSum = 0, avgN = 0, total = students.length, avaluats = 0, agePromos = 0;
     students.forEach((s) => {
-      const g = groupById(s.grupId); const sc = evals[`25-26:${s.id}`]?.scores || {};
+      const g = groupById(s.grupId); const sc = evals[`${SEASON}:${s.id}`]?.scores || {};
       const r = computeResult(g.nivell, sc);
       perLevel[g.nivell][r.result]++;
       const done = r.result !== "PENDENT";
@@ -1719,7 +1722,7 @@ function Tauler({ students, evals }) {
       const mn = monitorOf(g);
       if (!perMonitor[mn]) perMonitor[mn] = { total: 0, avaluats: 0 };
       perMonitor[mn].total++; if (done) perMonitor[mn].avaluats++;
-      const af = finalRecommendation(g.nivell, sc, studentAge(s), evals[`25-26:${s.id}`]?.override || null);
+      const af = finalRecommendation(g.nivell, sc, studentAge(s), evals[`${SEASON}:${s.id}`]?.override || null);
       if (af.agePromoted) agePromos++;
       if (nextByLevel[af.rec] != null) nextByLevel[af.rec]++;
     });
@@ -1738,9 +1741,9 @@ function Tauler({ students, evals }) {
 
   const levelChart = LEVELS.map((l) => ({ name: l.replace("Xiquets ", "X. ").replace("Infants ", "Inf. ").replace("Nadons ", "Nad. "), PUJA: data.perLevel[l].PUJA, MANTÉ: data.perLevel[l].MANTÉ, REFORÇ: data.perLevel[l].REFORÇ }));
   const compChart = [
-    { name: "PUJA", "24-25": prevTotals.PUJA, "25-26": data.totals.PUJA },
-    { name: "MANTÉ", "24-25": prevTotals.MANTÉ, "25-26": data.totals.MANTÉ },
-    { name: "REFORÇ", "24-25": prevTotals.REFORÇ, "25-26": data.totals.REFORÇ },
+    { name: "PUJA", [PREV_SEASON.label]: prevTotals.PUJA, [SEASON]: data.totals.PUJA },
+    { name: "MANTÉ", [PREV_SEASON.label]: prevTotals.MANTÉ, [SEASON]: data.totals.MANTÉ },
+    { name: "REFORÇ", [PREV_SEASON.label]: prevTotals.REFORÇ, [SEASON]: data.totals.REFORÇ },
   ];
   const pie = [
     { name: "Puja", value: data.totals.PUJA, c: "var(--puja)" },
@@ -1752,7 +1755,7 @@ function Tauler({ students, evals }) {
   return (
     <div>
       <h2 className="sn-display" style={{ fontSize: "1.5rem", fontWeight: 800, marginBottom: 4 }}>Tauler del coordinador</h2>
-      <p style={{ color: "var(--muted)", marginBottom: 18 }}>Visió global de l'escola, temporada 25-26 — comparada amb 24-25.</p>
+      <p style={{ color: "var(--muted)", marginBottom: 18 }}>Visió global de l'escola, temporada {SEASON} — comparada amb {PREV_SEASON.label}.</p>
 
       <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
         <KPI label="Alumnes" value={data.total} icon={Users} />
@@ -1798,8 +1801,8 @@ function Tauler({ students, evals }) {
               <YAxis tick={{ fontSize: 11, fill: "#5C7C7B" }} allowDecimals={false} />
               <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid var(--line)", fontSize: 12 }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="24-25" fill="#bcd6d2" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="25-26" fill="var(--aqua)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey={PREV_SEASON.label} fill="#bcd6d2" radius={[4, 4, 0, 0]} />
+              <Bar dataKey={SEASON} fill="var(--aqua)" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </Panel>
@@ -1823,7 +1826,7 @@ function Tauler({ students, evals }) {
             })}
           </div>
         </Panel>
-        <Panel title="Planificació temporada 26-27" full>
+        <Panel title={`Planificació temporada ${NEXT_SEASON}`} full>
           <div style={{ fontSize: ".82rem", color: "var(--muted)", marginBottom: 12 }}>Segons les recomanacions actuals, alumnes que estaran a cada nivell el curs vinent i grups orientatius que farien falta.</div>
           <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
             {LEVELS.map((l) => {

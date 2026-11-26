@@ -97,7 +97,7 @@ Piscina Municipal de Carcaixent`;
   }
   // Es deixa constància de l'enviament a la base de dades
   if (studentId) {
-    await admin.from("evaluations").update({ sent_at: new Date().toISOString(), sent_to: to }).eq("season", season || "25-26").eq("student_id", studentId);
+    await admin.from("evaluations").update({ sent_at: new Date().toISOString(), sent_to: to }).eq("season", season || "26-27").eq("student_id", studentId);
   }
   return res.status(200).json({ ok: true, id: data.id });
 }

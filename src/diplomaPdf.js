@@ -7,7 +7,7 @@
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 
-const PAGE_W = 210, PAGE_H = 297, MARGIN = 10; // mm (A4 vertical)
+const PAGE_W = 297, PAGE_H = 210, MARGIN = 10; // mm (A4 horitzontal)
 
 // Espera que el navegador haja pintat i que les fonts estiguen carregades
 export async function waitForPaint() {
@@ -23,7 +23,7 @@ export async function diplomaElementToPdfBase64(root) {
   const faces = Array.from(root.querySelectorAll(".dip"));
   if (faces.length === 0) throw new Error("No s'ha trobat el diploma per a generar el PDF.");
 
-  const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait", compress: true });
+  const pdf = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape", compress: true });
   const usableW = PAGE_W - MARGIN * 2;
 
   // Una cara per pàgina: pàgina 1 = anvers, pàgina 2 = revers (bé per a imprimir a doble cara)
@@ -44,7 +44,7 @@ export async function diplomaElementToPdfBase64(root) {
     const maxH = PAGE_H - MARGIN * 2;
     if (h > maxH) { w = (w * maxH) / h; h = maxH; }
     if (i > 0) pdf.addPage();
-    pdf.addImage(canvas.toDataURL("image/jpeg", 0.88), "JPEG", (PAGE_W - w) / 2, MARGIN, w, h, undefined, "FAST");
+    pdf.addImage(canvas.toDataURL("image/jpeg", 0.88), "JPEG", (PAGE_W - w) / 2, (PAGE_H - h) / 2, w, h, undefined, "FAST");
   }
 
   const uri = pdf.output("datauristring");
