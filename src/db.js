@@ -337,3 +337,30 @@ export async function fetchMetodologia() {
   metoCache = data.contingut;
   return metoCache;
 }
+
+/* ---------------- Missatges interns ---------------- */
+export async function fetchUsuaris() {
+  const { data, error } = await supabase.rpc("llista_usuaris");
+  if (error) throw new Error("No s'ha pogut carregar la llista de persones.");
+  return data || [];
+}
+export async function fetchMissatges() {
+  const { data, error } = await supabase.from("missatges")
+    .select("id, de, de_nom, assumpte, text, resposta_a, created_at, missatges_destinataris(user_id, nom, llegit_at)")
+    .order("created_at", { ascending: false }).limit(400);
+  if (error) throw new Error("No s'han pogut carregar els missatges.");
+  return (data || []).map((m) => ({ ...m, dest: m.missatges_destinataris || [] }));
+}
+export async function countNoLlegits(uid) {
+  const { count, error } = await supabase.from("missatges_destinataris").select("missatge_id", { count: "exact", head: true }).eq("user_id", uid).is("llegit_at", null);
+  if (error) return 0;
+  return count || 0;
+}
+export async function enviarMissatge(destinataris, assumpte, cos, resposta) {
+  const { data, error } = await supabase.rpc("enviar_missatge", { destinataris, assumpte, cos, resposta: resposta || null });
+  if (error) throw new Error(error.message || "No s'ha pogut enviar el missatge.");
+  return data;
+}
+export async function marcarLlegit(mid) {
+  await supabase.rpc("marcar_llegit", { mid });
+}

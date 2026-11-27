@@ -8,11 +8,12 @@ import {
 import {
   waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, EMAIL_RE
 } from "./diplomaPdf.js";
-import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON,
+import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON, countNoLlegits,
   saveExtra, deleteExtra, fetchEspera, addEspera, deleteEspera,
   fetchLlistaGrup, fetchSessions, fetchAssistencia, validarAssistencia } from "./db.js";
 import { hasSession, comesOn, isoOf, todayIso, FESTA_CLOENDA, estatInstalacio, sessioDelDia } from "./calendari.js";
 import { Metodologia, SessioDelDia } from "./metodologia.jsx";
+import { Missatges } from "./missatges.jsx";
 import { Login, ConfigMissing, ChangePasswordModal, UsersPanel, GroupsPanel } from "./auth.jsx";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -618,10 +619,10 @@ async function storeSet(k, v) { try { localStorage.setItem("aquacurs:" + k, JSON
 
 /* ============================ ROLS ============================ */
 const ROLES = {
-  monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["cal", "aval", "meto"], defaultTab: "cal" },
-  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "asis", "meto", "recep", "taul", "dades", "usu"], defaultTab: "segu" },
-  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "asis", "meto", "recep", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
-  recepcio: { label: "Recepció", icon: Users, desc: "Inscriu alumnes, canvia'ls de grup i gestiona la llista d'espera.", tabs: ["recep"], defaultTab: "recep" },
+  monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["cal", "aval", "meto", "msg"], defaultTab: "cal" },
+  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "asis", "meto", "msg", "recep", "taul", "dades", "usu"], defaultTab: "segu" },
+  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "asis", "meto", "msg", "recep", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
+  recepcio: { label: "Recepció", icon: Users, desc: "Inscriu alumnes, canvia'ls de grup i gestiona la llista d'espera.", tabs: ["recep", "msg"], defaultTab: "recep" },
 };
 
 /* ============================ APP ============================ */
@@ -654,6 +655,7 @@ function AppConnected() {
   const lastLoad = useRef(0);
   const [saveStatus, setSaveStatus] = useState({ state: "saved", pending: 0, error: "" });
   const [showPw, setShowPw] = useState(false);
+  const [unread, setUnread] = useState(0);
 
   // Sessió
   useEffect(() => {
@@ -736,6 +738,15 @@ function AppConnected() {
     return () => { document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
   }, [ready, me, loadData]);
 
+  // Missatges sense llegir (es comprova en entrar, cada minut i en tornar a l'app)
+  useEffect(() => {
+    if (!ready || !me) return;
+    const check = () => countNoLlegits(me.id).then(setUnread).catch(() => {});
+    check(); const t = setInterval(check, 60000);
+    window.addEventListener("focus", check);
+    return () => { clearInterval(t); window.removeEventListener("focus", check); };
+  }, [ready, me]);
+
   // Avís si es tanca la pestanya amb canvis sense desar
   useEffect(() => {
     const h = (e) => { if (syncRef.current && syncRef.current.pendingCount() > 0) { e.preventDefault(); e.returnValue = ""; } };
@@ -760,6 +771,7 @@ function AppConnected() {
     { id: "recep", label: "Recepció", icon: Users },
     { id: "cal", label: "Calendari", icon: Calendar },
     { id: "meto", label: "Metodologia", icon: BookOpen },
+    { id: "msg", label: "Missatges", icon: Mail },
     { id: "asis", label: "Assistència", icon: Calendar },
   ];
 
@@ -818,6 +830,7 @@ function AppConnected() {
             {TABS.map((t) => (
               <div key={t.id} className={`sn-tab ${activeTab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>
                 <t.icon size={17} /> {t.label}
+                {t.id === "msg" && unread > 0 && <span style={{ background: "#E2674A", color: "#fff", borderRadius: 999, fontSize: ".66rem", fontWeight: 800, padding: "1px 6px", marginLeft: 2 }}>{unread}</span>}
               </div>
             ))}
           </div>
@@ -832,6 +845,7 @@ function AppConnected() {
         {activeTab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} onGroupSaved={onGroupSaved} />}
         {activeTab === "usu" && <UsersPanel profiles={profiles} me={me} onChanged={reloadAll} />}
         {activeTab === "cal" && <Calendari me={me} isCoord={false} />}
+        {activeTab === "msg" && <Missatges me={me} onUnreadChange={setUnread} />}
         {activeTab === "meto" && <Metodologia defaultLevel={(GROUPS.find((g) => isMonitorOf(g, me.nom)) || {}).nivell} />}
         {activeTab === "asis" && <Calendari me={me} isCoord />}
         {activeTab === "recep" && <Recepcio students={students} setStudents={setStudents} me={me} isCoord={isCoordRole(role)} bump={() => setGroupsVer((v) => v + 1)} />}
