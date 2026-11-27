@@ -326,3 +326,14 @@ export async function adminUsers(action, payload) {
   if (!res.ok) throw new Error(data.error || `Error del servidor (${res.status})`);
   return data;
 }
+
+/* ---------------- Metodologia (contingut privat a Supabase) ---------------- */
+let metoCache = null;
+export async function fetchMetodologia() {
+  if (metoCache) return metoCache;
+  const { data, error } = await supabase.from("metodologia").select("contingut").eq("clau", "contingut").maybeSingle();
+  if (error) throw new Error("No s'ha pogut carregar la metodologia.");
+  if (!data) throw new Error("Encara no s'ha carregat el contingut de metodologia a la base de dades.");
+  metoCache = data.contingut;
+  return metoCache;
+}

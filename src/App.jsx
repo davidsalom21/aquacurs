@@ -3,7 +3,7 @@ import {
   Waves, Users, ClipboardList, BarChart3, Dumbbell, Database, ChevronRight,
   ChevronLeft, Printer, Check, Award, AlertTriangle, ArrowUpRight, Minus,
   RotateCcw, Upload, Download, Search, X, Loader2, FileSpreadsheet, Sparkles,
-  Calendar, Clock, User, Mail, Send, Trash2, UserMinus, KeyRound, LogOut
+  Calendar, Clock, User, Mail, Send, Trash2, UserMinus, KeyRound, LogOut, BookOpen
 } from "lucide-react";
 import {
   waitForPaint, diplomaElementToPdfBase64, sendDiplomaEmail, EMAIL_RE
@@ -11,7 +11,8 @@ import {
 import { supabase, supabaseConfigured, fetchAll, fetchMyProfile, createSync, signOut, getAccessToken, evalKey, SEASON,
   saveExtra, deleteExtra, fetchEspera, addEspera, deleteEspera,
   fetchLlistaGrup, fetchSessions, fetchAssistencia, validarAssistencia } from "./db.js";
-import { hasSession, comesOn, isoOf, todayIso, FESTA_CLOENDA, estatInstalacio } from "./calendari.js";
+import { hasSession, comesOn, isoOf, todayIso, FESTA_CLOENDA, estatInstalacio, sessioDelDia } from "./calendari.js";
+import { Metodologia, SessioDelDia } from "./metodologia.jsx";
 import { Login, ConfigMissing, ChangePasswordModal, UsersPanel, GroupsPanel } from "./auth.jsx";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -617,9 +618,9 @@ async function storeSet(k, v) { try { localStorage.setItem("aquacurs:" + k, JSON
 
 /* ============================ ROLS ============================ */
 const ROLES = {
-  monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["cal", "aval"], defaultTab: "cal" },
-  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "asis", "recep", "taul", "dades", "usu"], defaultTab: "segu" },
-  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "asis", "recep", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
+  monitor: { label: "Monitor/a", icon: User, desc: "Avalua els teus grups i genera els diplomes.", tabs: ["cal", "aval", "meto"], defaultTab: "cal" },
+  coord_nat: { label: "Coordinació de natació", icon: Users, desc: "Segueix el treball de cada monitor, revisa els diplomes i envia'ls a les famílies.", tabs: ["segu", "aval", "asis", "meto", "recep", "taul", "dades", "usu"], defaultTab: "segu" },
+  coord_gen: { label: "Coordinació general", icon: BarChart3, desc: "Visió global del centre i totes les activitats. També pot enviar els diplomes.", tabs: ["segu", "aval", "asis", "meto", "recep", "taul", "ruti", "dades", "usu"], defaultTab: "taul" },
   recepcio: { label: "Recepció", icon: Users, desc: "Inscriu alumnes, canvia'ls de grup i gestiona la llista d'espera.", tabs: ["recep"], defaultTab: "recep" },
 };
 
@@ -758,6 +759,7 @@ function AppConnected() {
     { id: "usu", label: "Usuaris", icon: KeyRound },
     { id: "recep", label: "Recepció", icon: Users },
     { id: "cal", label: "Calendari", icon: Calendar },
+    { id: "meto", label: "Metodologia", icon: BookOpen },
     { id: "asis", label: "Assistència", icon: Calendar },
   ];
 
@@ -830,6 +832,7 @@ function AppConnected() {
         {activeTab === "dades" && <Dades students={students} setStudents={setStudents} setEvals={setEvals} onGroupSaved={onGroupSaved} />}
         {activeTab === "usu" && <UsersPanel profiles={profiles} me={me} onChanged={reloadAll} />}
         {activeTab === "cal" && <Calendari me={me} isCoord={false} />}
+        {activeTab === "meto" && <Metodologia defaultLevel={(GROUPS.find((g) => isMonitorOf(g, me.nom)) || {}).nivell} />}
         {activeTab === "asis" && <Calendari me={me} isCoord />}
         {activeTab === "recep" && <Recepcio students={students} setStudents={setStudents} me={me} isCoord={isCoordRole(role)} bump={() => setGroupsVer((v) => v + 1)} />}
       </main>
@@ -2954,6 +2957,7 @@ function PassarLlista({ g, iso, me, isCoord, session, onClose }) {
         {future && <div style={{ fontSize: ".8rem", color: "var(--muted)", marginTop: 6 }}>Aquesta classe encara no s'ha fet: es podrà passar llista el mateix dia.</div>}
         {!isMonitorOf(g, me.nom) && !isCoord && !session && !future && <div style={{ fontSize: ".8rem", color: "#8a5a10", marginTop: 6 }}>No és un grup teu: passa llista només si avui el cobreixes tu. Quedarà registrat amb el teu nom.</div>}
       </div>
+      <SessioDelDia appLevel={g.nivell} numero={sessioDelDia(g, iso)} />
       {err && <div style={{ color: "var(--coral)", fontSize: ".84rem", marginBottom: 10 }}>{err}</div>}
       <div className="sn-card sn-shadow" style={{ background: "#fff", overflow: "hidden" }}>
         {list === null && <div style={{ padding: 16, color: "var(--muted)" }}><Loader2 size={15} className="animate-spin" style={{ display: "inline", marginRight: 6 }} />Carregant la llista…</div>}

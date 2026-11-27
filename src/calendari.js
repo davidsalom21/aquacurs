@@ -203,3 +203,22 @@ export function trimestreOf(iso) {
 }
 /** Un alumne que només va uns dies, ve en aquesta data? (el dia de la cloenda venen tots) */
 export const comesOn = (dies, iso) => !dies || !dies.length || iso === FESTA_CLOENDA || dies.includes(weekdayCode(iso));
+
+/**
+ * Número de sessió del calendari d'activitats (1-30) que toca a un grup en una data.
+ * Regla dels documents: als grups de dos dies cada sessió es fa els dos dies de la setmana;
+ * 1r trimestre = sessions 1-10, 2n = 11-21, 3r = 22-30. Als anuals (divendres/dissabte), una sessió per classe.
+ * La cloenda sempre és la sessió 30. Torna null si aquell dia el grup no té classe.
+ */
+export function sessioDelDia(g, iso) {
+  const k = calKind(g); if (!k || !hasSession(g, iso)) return null;
+  if (iso === FESTA_CLOENDA) return 30;
+  if (k === "dv" || k === "ds") {
+    const idx = [...ANUAL[k]].sort().indexOf(iso);
+    return idx < 0 ? null : Math.min(idx + 1, 29);
+  }
+  const t = trimestreOf(iso); if (!t) return null;
+  const list = [...TRIMESTRES[t][k]].sort(); const idx = list.indexOf(iso); if (idx < 0) return null;
+  const base = { T1: 1, T2: 11, T3: 22 }[t], end = { T1: 10, T2: 21, T3: 29 }[t];
+  return Math.min(base + Math.floor(idx / 2), end);
+}
